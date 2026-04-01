@@ -26,7 +26,7 @@ export default function CardsPage() {
   const loadCards = async () => {
     try {
       setLoading(true);
-      const data = await cardService.getAllCards();
+      const data = await cardService.getCards();
       setCards(data);
     } catch (error) {
       toast({
@@ -149,7 +149,7 @@ export default function CardsPage() {
                 <Card
                   key={card.id}
                   className="bg-slate-800 border-slate-700 hover:border-cyan-500 transition-all cursor-pointer"
-                  onClick={() => router.push(`/cards/${card.slug}`)}
+                  onClick={() => router.push(`/cards/${card.id}`)}
                 >
                   <CardHeader>
                     <CardTitle className="text-white text-lg">{card.name}</CardTitle>
