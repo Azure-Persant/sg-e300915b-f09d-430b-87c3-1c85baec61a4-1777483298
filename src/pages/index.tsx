@@ -2,9 +2,39 @@ import Link from "next/link";
 import { Navigation } from "@/components/Navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Layers, BookOpen, Sparkles, BarChart3 } from "lucide-react";
+import { Layers, BookOpen, Sparkles, BarChart3, Database, List, Swords } from "lucide-react";
+import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function HomePage() {
+  const [syncing, setSyncing] = useState(false);
+  const { toast } = useToast();
+
+  const syncCards = async () => {
+    setSyncing(true);
+    try {
+      const response = await fetch("/api/sync-cards", { method: "POST" });
+      const data = await response.json();
+      
+      if (data.success) {
+        toast({
+          title: "Sync Complete!",
+          description: `Synced ${data.synced} cards from ${data.sets} sets.`,
+        });
+      } else {
+        throw new Error(data.details || "Sync failed");
+      }
+    } catch (error) {
+      toast({
+        title: "Sync Failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <>
       <Navigation />
@@ -76,17 +106,21 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="container py-16 pb-32">
-          <div className="bg-gradient-to-r from-primary/10 via-accent/10 to-primary/10 rounded-2xl p-12 text-center border border-border/50">
-            <h2 className="text-3xl md:text-4xl font-heading font-bold mb-4">
-              Ready to organize your collection?
-            </h2>
-            <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-              Join collectors who trust GA Collector to manage their Grand Archive cards
+        <section className="container py-20">
+          <div className="text-center space-y-6">
+            <h2 className="text-3xl font-bold">Ready to Build?</h2>
+            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+              Start tracking your Grand Archive collection and building competitive decks today.
             </p>
-            <Button size="lg" asChild>
-              <Link href="/auth/signup">Get Started Free</Link>
-            </Button>
+            <div className="flex gap-4 justify-center flex-wrap">
+              <Button size="lg" asChild>
+                <Link href="/auth/signup">Get Started Free</Link>
+              </Button>
+              <Button size="lg" variant="outline" onClick={syncCards} disabled={syncing}>
+                <Database className="mr-2 h-5 w-5" />
+                {syncing ? "Syncing Cards..." : "Sync Card Database"}
+              </Button>
+            </div>
           </div>
         </section>
       </main>
