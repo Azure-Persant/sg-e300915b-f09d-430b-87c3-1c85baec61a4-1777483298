@@ -64,7 +64,7 @@ export default function CardsPage() {
       console.log("Total sets:", data.totalSets);
 
       toast({
-        title: "TEST - Sync Complete!",
+        title: "Sync Complete!",
         description: `Synced ${data.totalCards || 'unknown'} cards from ${data.totalSets || 'unknown'} sets.`,
       });
 
