@@ -62,6 +62,8 @@ export default function CardsPage() {
       console.log("Response status:", response.status);
       const data = await response.json();
       console.log("Response data:", data);
+      console.log("totalCards:", data.totalCards);
+      console.log("totalSets:", data.totalSets);
 
       if (!response.ok) {
         throw new Error(data.error || data.details || "Sync failed");
