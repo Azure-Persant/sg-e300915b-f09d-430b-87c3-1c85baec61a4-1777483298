@@ -1,7 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabase } from "@/integrations/supabase/client";
 
-// Map numeric rarity values to string names
+const API_BASE_URL = "https://api.gatcg.com";
+
+// Rarity mapping from numeric to string values
 const RARITY_MAP: Record<number, string> = {
   1: "common",
   2: "uncommon",
@@ -11,40 +13,6 @@ const RARITY_MAP: Record<number, string> = {
   9: "champion_rare",
 };
 
-interface GATCGEdition {
-  set: {
-    prefix: string;
-    name: string;
-  };
-  collector_number: string;
-  illustrator: string;
-  image: string;
-  rarity: number;
-}
-
-interface GATCGCard {
-  name: string;
-  slug: string;
-  classes: string[];
-  types: string[];
-  cost_memory: number | null;
-  cost_reserve: number | null;
-  power: number | null;
-  life: number | null;
-  durability: number | null;
-  effect: string | null;
-  effect_raw: string | null;
-  flavor: string | null;
-  editions: GATCGEdition[];
-}
-
-interface APIResponse {
-  data: GATCGCard[];
-  dataCount: number;
-  totalCount: number;
-  hasNext: boolean;
-}
-
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -53,137 +21,145 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  console.log("=== SYNC STARTED ===");
+  console.log("Timestamp:", new Date().toISOString());
+
   try {
-    console.log("Starting card sync from Grand Archive API...");
-    
-    // Step 1: Fetch all cards from API with pagination
-    const allCards: GATCGCard[] = [];
+    // Step 1: Fetch all cards from API
+    console.log("\n[STEP 1] Fetching cards from Grand Archive API...");
+    const allCards: any[] = [];
     let page = 1;
     let hasNext = true;
-    const limit = 100;
 
-    while (hasNext && page <= 50) {
-      console.log(`Fetching page ${page} from /cards/search...`);
+    while (hasNext) {
+      console.log(`  Fetching page ${page}...`);
       const response = await fetch(
-        `https://api.gatcg.com/cards/search?page=${page}&limit=${limit}`
+        `${API_BASE_URL}/cards/search?page=${page}&limit=100`
       );
       
       if (!response.ok) {
-        console.error(`Failed to fetch page ${page}: ${response.status}`);
-        break;
+        console.error(`  ❌ API request failed with status ${response.status}`);
+        throw new Error(`API request failed: ${response.status}`);
       }
 
-      const data: APIResponse = await response.json();
-      console.log(`Page ${page}: ${data.dataCount} cards, hasNext: ${data.hasNext}`);
+      const data = await response.json();
+      console.log(`  ✓ Page ${page}: Received ${data.data?.length || 0} cards`);
       
-      if (data.data && data.data.length > 0) {
-        allCards.push(...data.data);
-      }
-      
-      hasNext = data.hasNext;
+      allCards.push(...(data.data || []));
+      hasNext = data.hasNext || false;
       page++;
-      
-      // Add small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    console.log(`Total cards fetched: ${allCards.length}`);
+    console.log(`\n[STEP 1 COMPLETE] Total cards fetched: ${allCards.length}`);
 
-    // Step 2: Extract unique sets from card editions
-    const setsMap = new Map<string, { code: string; name: string }>();
-    
-    for (const card of allCards) {
-      if (card.editions && card.editions.length > 0) {
-        for (const edition of card.editions) {
-          if (edition.set && edition.set.prefix) {
-            const setCode = edition.set.prefix;
-            if (!setsMap.has(setCode)) {
-              setsMap.set(setCode, {
-                code: setCode,
-                name: edition.set.name,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    console.log(`Found ${setsMap.size} unique sets`);
-
-    // Step 3: Upsert sets into database
-    const sets = Array.from(setsMap.values());
-    if (sets.length > 0) {
-      const { error: setsError } = await supabase
-        .from("sets")
-        .upsert(sets, { onConflict: "code" });
-
-      if (setsError) {
-        console.error("Error inserting sets:", setsError);
-        return res.status(500).json({ 
-          error: "Failed to insert sets",
-          details: setsError.message 
-        });
-      }
-      console.log(`Inserted/updated ${sets.length} sets`);
-    }
-
-    // Step 4: Get set IDs for mapping
-    const { data: setRecords, error: setFetchError } = await supabase
-      .from("sets")
-      .select("id, code");
-
-    if (setFetchError) {
-      console.error("Error fetching sets:", setFetchError);
+    if (allCards.length === 0) {
+      console.error("❌ No cards fetched from API!");
       return res.status(500).json({ 
-        error: "Failed to fetch sets",
-        details: setFetchError.message 
+        error: "No cards fetched from API",
+        totalCards: 0,
+        totalSets: 0
       });
     }
 
-    const setIdMap = new Map<string, string>();
-    setRecords?.forEach(set => {
-      setIdMap.set(set.code, set.id);
+    // Step 2: Extract unique sets
+    console.log("\n[STEP 2] Extracting unique sets from cards...");
+    const uniqueSets = new Map<string, { code: string; name: string }>();
+
+    allCards.forEach((card, index) => {
+      if (card.editions && card.editions.length > 0) {
+        const edition = card.editions[0];
+        if (edition.set && edition.set.prefix) {
+          const setCode = edition.set.prefix;
+          const setName = edition.set.name || setCode;
+          
+          if (!uniqueSets.has(setCode)) {
+            uniqueSets.set(setCode, { code: setCode, name: setName });
+            console.log(`  Found new set: ${setCode} - ${setName}`);
+          }
+        } else {
+          console.log(`  ⚠️ Card ${index} "${card.name}" has edition but no set.prefix`);
+        }
+      } else {
+        console.log(`  ⚠️ Card ${index} "${card.name}" has no editions`);
+      }
     });
 
-    // Step 5: Insert cards into database
+    console.log(`\n[STEP 2 COMPLETE] Found ${uniqueSets.size} unique sets`);
+
+    // Step 3: Insert/update sets
+    console.log("\n[STEP 3] Inserting sets into database...");
+    const setIdMap = new Map<string, string>();
+
+    for (const [setCode, setData] of uniqueSets.entries()) {
+      console.log(`  Upserting set: ${setCode} - ${setData.name}`);
+      
+      const { data: setResult, error: setError } = await supabase
+        .from("sets")
+        .upsert(
+          {
+            code: setData.code,
+            name: setData.name,
+          },
+          { onConflict: "code" }
+        )
+        .select("id, code")
+        .single();
+
+      if (setError) {
+        console.error(`  ❌ Error upserting set ${setCode}:`, setError);
+        throw new Error(`Failed to upsert set ${setCode}: ${setError.message}`);
+      }
+
+      if (setResult) {
+        setIdMap.set(setCode, setResult.id);
+        console.log(`  ✓ Set ${setCode} saved with ID: ${setResult.id}`);
+      } else {
+        console.error(`  ❌ No result returned for set ${setCode}`);
+      }
+    }
+
+    console.log(`\n[STEP 3 COMPLETE] ${setIdMap.size} sets saved to database`);
+
+    // Step 4: Insert cards
+    console.log("\n[STEP 4] Inserting cards into database...");
     let successCount = 0;
     let errorCount = 0;
     const errors: any[] = [];
 
-    console.log(`Starting to insert ${allCards.length} cards...`);
-
-    for (const card of allCards) {
+    for (let i = 0; i < allCards.length; i++) {
+      const card = allCards[i];
+      
       try {
-        // Get the first edition for primary card data
+        // Get first edition
         const firstEdition = card.editions?.[0];
         if (!firstEdition || !firstEdition.set) {
-          console.log(`Card ${card.name} has no valid editions, skipping`);
+          console.log(`  ⚠️ Card ${i + 1}/${allCards.length}: "${card.name}" - No edition/set, skipping`);
           errorCount++;
           continue;
         }
 
         const setCode = firstEdition.set.prefix;
         const setId = setIdMap.get(setCode);
-        
+
         if (!setId) {
-          console.error(`Set not found for card: ${card.name} (${setCode})`);
+          console.error(`  ❌ Card ${i + 1}/${allCards.length}: "${card.name}" - Set ${setCode} not found in map`);
           errorCount++;
-          errors.push({ card: card.name, reason: `Set ${setCode} not found` });
+          errors.push({ card: card.name, reason: `Set ${setCode} not in map` });
           continue;
         }
 
-        // Convert numeric rarity to string
-        const rarityNum = firstEdition.rarity;
+        // Map rarity
+        const rarityNum = firstEdition.rarity || 1;
         const rarity = RARITY_MAP[rarityNum] || "common";
-        
-        // Get the first class and type
-        const cardClass = card.classes && card.classes.length > 0 ? card.classes[0] : null;
-        const cardType = card.types && card.types.length > 0 ? card.types[0] : "Unknown";
 
-        // Convert relative image path to full URL
-        const imageUrl = firstEdition.image.startsWith("http")
-          ? firstEdition.image
-          : `https://index.gatcg.com${firstEdition.image}`;
+        // Build full image URL
+        const imageUrl = firstEdition.image
+          ? `https://index.gatcg.com${firstEdition.image}`
+          : null;
+
+        // Get card data
+        const cardClass = card.classes?.[0] || null;
+        const cardType = card.types?.[0] || "Unknown";
 
         const cardData = {
           name: card.name,
@@ -194,32 +170,33 @@ export default async function handler(
           class: cardClass,
           element: null,
           cost: card.cost_memory || 0,
-          power: card.power,
-          life: card.life,
+          power: card.power || null,
+          life: card.life || null,
           effect_text: card.effect || card.effect_raw || "",
           flavor_text: card.flavor || null,
           image_url: imageUrl,
-          illustrator: firstEdition.illustrator,
+          illustrator: firstEdition.illustrator || null,
         };
 
-        const { error } = await supabase
+        if ((i + 1) % 10 === 0) {
+          console.log(`  Progress: ${i + 1}/${allCards.length} cards processed...`);
+        }
+
+        const { error: cardError } = await supabase
           .from("cards")
           .upsert(cardData, {
             onConflict: "set_id,card_number",
           });
 
-        if (error) {
-          console.error(`Error inserting card ${card.name}:`, error);
+        if (cardError) {
+          console.error(`  ❌ Card ${i + 1}: "${card.name}" - Error:`, cardError.message);
           errorCount++;
-          errors.push({ card: card.name, error: error.message });
+          errors.push({ card: card.name, error: cardError.message });
         } else {
           successCount++;
-          if (successCount % 100 === 0) {
-            console.log(`Inserted ${successCount} cards so far...`);
-          }
         }
       } catch (err) {
-        console.error(`Exception inserting card ${card.name}:`, err);
+        console.error(`  ❌ Card ${i + 1}: "${card.name}" - Exception:`, err);
         errorCount++;
         errors.push({ 
           card: card.name, 
@@ -228,23 +205,37 @@ export default async function handler(
       }
     }
 
-    console.log(`Sync complete: ${successCount} cards inserted, ${errorCount} errors`);
+    console.log(`\n[STEP 4 COMPLETE] Cards inserted: ${successCount} successful, ${errorCount} errors`);
+    
     if (errors.length > 0) {
-      console.log("First 10 errors:", errors.slice(0, 10));
+      console.log("\n=== FIRST 10 ERRORS ===");
+      errors.slice(0, 10).forEach((err, idx) => {
+        console.log(`${idx + 1}. Card: ${err.card}`);
+        console.log(`   Error: ${err.error || err.reason}`);
+      });
     }
 
-    res.status(200).json({
-      message: "Card sync completed",
-      cardsInserted: successCount,
+    console.log("\n=== SYNC COMPLETED ===");
+    console.log(`Total cards: ${successCount}`);
+    console.log(`Total sets: ${setIdMap.size}`);
+    console.log(`Errors: ${errorCount}`);
+
+    return res.status(200).json({
+      success: true,
+      totalCards: successCount,
+      totalSets: setIdMap.size,
       errors: errorCount,
-      setsCreated: sets.length,
       errorDetails: errors.slice(0, 10),
     });
   } catch (error) {
-    console.error("Fatal error during sync:", error);
-    res.status(500).json({
+    console.error("\n=== SYNC FAILED WITH EXCEPTION ===");
+    console.error("Error:", error);
+    console.error("Stack:", error instanceof Error ? error.stack : "No stack trace");
+    
+    return res.status(500).json({
       error: "Failed to sync cards",
       details: error instanceof Error ? error.message : "Unknown error",
+      stack: error instanceof Error ? error.stack : undefined,
     });
   }
 }
