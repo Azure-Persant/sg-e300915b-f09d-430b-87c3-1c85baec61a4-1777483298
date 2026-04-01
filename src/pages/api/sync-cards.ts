@@ -46,16 +46,16 @@ export default async function handler(
       const data = await response.json();
       console.log(`  ✓ Page ${page}: Received ${data.data?.length || 0} cards`);
       console.log(`  API Response metadata:`, {
-        hasNext: data.hasNext,
+        hasMore: data.has_more,
         page: data.page,
-        total: data.total,
-        totalPages: data.totalPages,
+        totalCards: data.total_cards,
+        totalPages: data.total_pages,
         dataLength: data.data?.length
       });
       
       allCards.push(...(data.data || []));
-      hasNext = data.hasNext || false;
-      console.log(`  Will continue? hasNext=${hasNext}`);
+      hasNext = data.has_more || false;
+      console.log(`  Will continue? hasMore=${hasNext}`);
       page++;
     }
 
