@@ -1,0 +1,31 @@
+
+> softgen-firebase-starter@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.13
+  - Local:        http://localhost:3000
+
+ ✓ Starting...
+ ✓ Ready in 1908ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1801ms (269 modules)
+ ✓ Compiled in 176ms (269 modules)
+ GET / 200 in 2064ms
+[?25h
+
+> softgen-firebase-starter@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.13
+  - Local:        http://localhost:3000
+
+ ✓ Starting...
+ ✓ Ready in 1762ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1136ms (269 modules)
+ ✓ Compiled in 206ms (269 modules)
+ GET / 200 in 1439ms
+ GET / 200 in 12ms
+ GET / 200 in 9ms
+ GET / 200 in 7ms
+[?25h
