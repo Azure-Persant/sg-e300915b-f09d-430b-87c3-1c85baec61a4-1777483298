@@ -44,9 +44,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log("Starting card sync from Grand Archive API...");
 
     // Step 1: Fetch and sync sets
+    console.log(`Fetching sets from ${API_BASE_URL}/sets`);
     const setsResponse = await fetch(`${API_BASE_URL}/sets`);
-    if (!setsResponse.ok) throw new Error("Failed to fetch sets");
+    console.log("Sets response status:", setsResponse.status);
+    
+    if (!setsResponse.ok) {
+      const errorText = await setsResponse.text();
+      console.error("Sets fetch error:", errorText);
+      throw new Error(`Failed to fetch sets: ${setsResponse.status} - ${errorText}`);
+    }
+    
     const setsData = await setsResponse.json();
+    console.log("Sets data structure:", JSON.stringify(setsData, null, 2));
     const sets: GATCGSet[] = setsData.data || [];
 
     console.log(`Found ${sets.length} sets`);
