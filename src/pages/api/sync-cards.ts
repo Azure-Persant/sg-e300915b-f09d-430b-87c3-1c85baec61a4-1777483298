@@ -106,60 +106,85 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: dbSets } = await supabase.from("sets").select("id, code");
     const setIdMap = new Map(dbSets?.map((s) => [s.code, s.id]) || []);
 
-    // Insert cards into database
+    // Step 4: Insert cards into database
     let successCount = 0;
     let errorCount = 0;
+    const errors: any[] = [];
+
+    console.log(`Starting to insert ${allCards.length} cards...`);
 
     for (const card of allCards) {
-      // Get the first edition for this card
-      const firstEdition = card.editions && card.editions.length > 0 ? card.editions[0] : null;
-      
-      if (!firstEdition) {
-        console.log(`Skipping card ${card.name}: no editions`);
-        errorCount++;
-        continue;
-      }
+      try {
+        // Find the set for this card's first edition
+        const firstEdition = card.editions?.[0];
+        if (!firstEdition) {
+          console.log(`Card ${card.name} has no editions, skipping`);
+          errorCount++;
+          continue;
+        }
 
-      const setId = setIdMap.get(firstEdition.set);
-      if (!setId) {
-        console.error(`Set not found for card: ${card.name} (${firstEdition.set})`);
-        errorCount++;
-        continue;
-      }
+        const setCode = firstEdition.set;
+        const setId = setIdMap.get(setCode);
+        
+        if (!setId) {
+          console.error(`Set not found for card: ${card.name} (${setCode})`);
+          errorCount++;
+          errors.push({ card: card.name, reason: `Set ${setCode} not found in map` });
+          continue;
+        }
 
-      // Format rarity to match database constraint
-      const rarityFormatted = card.rarity?.toLowerCase().replace(/\s+/g, '_') || 'common';
+        // Format rarity to match the CHECK constraint
+        const rarityFormatted = card.rarity?.toLowerCase().replace(/\s+/g, '_') || 'common';
+        
+        // Get the first class if available
+        const cardClass = card.classes && card.classes.length > 0 ? card.classes[0] : null;
+        
+        // Get the first type if available
+        const cardType = card.types && card.types.length > 0 ? card.types[0] : 'Unknown';
 
-      const { error } = await supabase
-        .from("cards")
-        .upsert({
+        const cardData = {
           name: card.name,
           set_id: setId,
           card_number: firstEdition.collector_number || "0",
           rarity: rarityFormatted,
-          card_type: card.types && card.types.length > 0 ? card.types[0] : "Unknown",
-          class: card.classes && card.classes.length > 0 ? card.classes[0] : null,
-          element: null, // Not present in this API structure
+          card_type: cardType,
+          class: cardClass,
+          element: null, // Grand Archive doesn't use elements like we defined
           cost: card.cost_memory || 0,
           power: card.power,
           life: card.life,
           effect_text: card.effect_text || card.effect_raw || "",
-          flavor_text: card.flavor,
-          image_url: card.image ? `https://api.gatcg.com${card.image}` : null,
+          flavor_text: card.flavor || null,
+          image_url: card.image,
           illustrator: card.illustrator,
-        }, {
-          onConflict: "set_id, card_number",
-        });
+        };
 
-      if (error) {
-        console.error(`Error inserting card ${card.name}:`, error.message);
+        console.log(`Inserting card: ${card.name} (${rarityFormatted}, ${cardType})`);
+
+        const { error } = await supabase
+          .from("cards")
+          .upsert(cardData, {
+            onConflict: "set_id,card_number",
+          });
+
+        if (error) {
+          console.error(`Error inserting card ${card.name}:`, error);
+          errorCount++;
+          errors.push({ card: card.name, error: error.message });
+        } else {
+          successCount++;
+        }
+      } catch (err) {
+        console.error(`Exception inserting card ${card.name}:`, err);
         errorCount++;
-      } else {
-        successCount++;
+        errors.push({ card: card.name, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
-    console.log(`Sync complete: ${successCount} cards synced, ${errorCount} errors`);
+    console.log(`Sync complete: ${successCount} successful, ${errorCount} errors`);
+    if (errors.length > 0) {
+      console.log("First 10 errors:", errors.slice(0, 10));
+    }
 
     return res.status(200).json({
       success: true,
