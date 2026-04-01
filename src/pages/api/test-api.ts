@@ -3,45 +3,44 @@ import type { NextApiRequest, NextApiResponse } from "next";
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const baseUrl = "https://api.gatcg.com";
   
-  // Try common endpoint patterns
-  const endpoints = [
-    "/api/cards",
-    "/api/sets",
-    "/api/v1/cards",
-    "/api/v1/sets",
-    "/card",
-    "/set",
-    "/cards/search",
-    "/sets/all",
-    "/public/cards",
-    "/public/sets",
-    "/data/cards",
-    "/data/sets",
-  ];
+  try {
+    // Test the working /cards/search endpoint with different parameters
+    const tests = [
+      { url: `${baseUrl}/cards/search`, label: "Basic search" },
+      { url: `${baseUrl}/cards/search?page=1`, label: "Page 1" },
+      { url: `${baseUrl}/cards/search?limit=5`, label: "Limit 5" },
+      { url: `${baseUrl}/cards/search?page=1&limit=5`, label: "Page 1, Limit 5" },
+    ];
 
-  const results = [];
+    const results = [];
 
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(`${baseUrl}${endpoint}`);
-      if (response.ok) {
-        const contentType = response.headers.get("content-type");
-        if (contentType?.includes("json")) {
+    for (const test of tests) {
+      try {
+        const response = await fetch(test.url);
+        if (response.ok) {
           const data = await response.json();
           results.push({
-            endpoint,
-            status: response.status,
-            preview: JSON.stringify(data).substring(0, 200),
+            label: test.label,
+            url: test.url,
+            dataCount: data.data?.length || 0,
+            totalCount: data.total || data.meta?.total || "unknown",
+            hasNext: data.next || data.meta?.next || false,
+            sampleCard: data.data?.[0] || null,
           });
         }
+      } catch (error) {
+        // Skip errors
       }
-    } catch (error) {
-      // Skip errors
     }
-  }
 
-  return res.status(200).json({ 
-    working_endpoints: results,
-    message: "These endpoints returned successful JSON responses"
-  });
+    return res.status(200).json({ 
+      results,
+      message: "Grand Archive API endpoint analysis"
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Test failed",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
 }
