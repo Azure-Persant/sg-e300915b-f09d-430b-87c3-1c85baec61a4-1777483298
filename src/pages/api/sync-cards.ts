@@ -142,6 +142,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Get the first type if available
         const cardType = card.types && card.types.length > 0 ? card.types[0] : 'Unknown';
 
+        // Convert relative image path to full URL
+        const imageUrl = card.image?.startsWith('http') 
+          ? card.image 
+          : `https://index.gatcg.com${card.image}`;
+
         const cardData = {
           name: card.name,
           set_id: setId,
@@ -155,7 +160,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           life: card.life,
           effect_text: card.effect_text || card.effect_raw || "",
           flavor_text: card.flavor || null,
-          image_url: card.image,
+          image_url: imageUrl,
           illustrator: card.illustrator,
         };
 
