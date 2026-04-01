@@ -1,0 +1,1 @@
+{"rules": {"no-invalid-position-at-import-rule": true, "at-rule-no-unknown": null, "color-no-invalid-hex": true, "function-calc-no-unspaced-operator": true, "custom-property-no-missing-var-function": true}}

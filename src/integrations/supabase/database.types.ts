@@ -249,7 +249,7 @@ export type Database = {
           created_at: string | null
           foil_quantity: number
           id: string
-          location_id: string | null
+          location: string | null
           notes: string | null
           quantity: number
           updated_at: string | null
@@ -260,7 +260,7 @@ export type Database = {
           created_at?: string | null
           foil_quantity?: number
           id?: string
-          location_id?: string | null
+          location?: string | null
           notes?: string | null
           quantity?: number
           updated_at?: string | null
@@ -271,7 +271,7 @@ export type Database = {
           created_at?: string | null
           foil_quantity?: number
           id?: string
-          location_id?: string | null
+          location?: string | null
           notes?: string | null
           quantity?: number
           updated_at?: string | null
@@ -287,7 +287,7 @@ export type Database = {
           },
           {
             foreignKeyName: "user_collections_location_id_fkey"
-            columns: ["location_id"]
+            columns: ["location"]
             isOneToOne: false
             referencedRelation: "card_locations"
             referencedColumns: ["id"]

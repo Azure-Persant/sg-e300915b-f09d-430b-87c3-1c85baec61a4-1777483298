@@ -1,0 +1,1 @@
+ALTER TABLE user_collections RENAME COLUMN location_id TO location;
