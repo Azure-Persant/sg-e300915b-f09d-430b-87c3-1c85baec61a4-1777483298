@@ -4,102 +4,47 @@
  */
 
 interface GATCGCard {
-  uuid: string;
   name: string;
   slug: string;
-  edition: string;
-  set: {
-    name: string;
-    prefix: string;
-  };
+  classes: string[];
+  cost_memory: number | null;
+  cost_reserve: number | null;
   rarity: string;
   types: string[];
-  subtypes: string[];
-  element: string | null;
-  cost: {
-    memory?: number;
-    reserve?: number;
-  };
+  effect_text: string | null;
+  effect_raw: string | null;
+  flavor: string | null;
+  illustrator: string | null;
+  image: string;
   power: number | null;
   life: number | null;
-  effect_text: string;
-  flavor_text: string | null;
-  image_url: string;
-  illustrator: string;
-}
-
-interface GATCGSet {
-  name: string;
-  prefix: string;
-  slug: string;
-  release_date: string;
+  durability: number | null;
+  editions: Array<{
+    set: string;
+    collector_number: string;
+  }>;
 }
 
 const API_BASE_URL = "https://api.gatcg.com";
 
 export const gatcgApiService = {
   /**
-   * Fetch all available sets
-   */
-  async getSets(): Promise<GATCGSet[]> {
-    try {
-      const response = await fetch(`${API_BASE_URL}/sets`);
-      if (!response.ok) throw new Error("Failed to fetch sets");
-      const data = await response.json();
-      return data.data || [];
-    } catch (error) {
-      console.error("Error fetching sets:", error);
-      return [];
-    }
-  },
-
-  /**
    * Fetch all cards (with pagination)
    */
-  async getAllCards(page = 1, perPage = 100): Promise<{ cards: GATCGCard[]; total: number }> {
+  async getAllCards(page = 1, limit = 100): Promise<{ cards: GATCGCard[]; hasNext: boolean }> {
     try {
       const response = await fetch(
-        `${API_BASE_URL}/cards?page=${page}&per_page=${perPage}`
+        `${API_BASE_URL}/cards/search?page=${page}&limit=${limit}`
       );
       if (!response.ok) throw new Error("Failed to fetch cards");
       const data = await response.json();
       return {
         cards: data.data || [],
-        total: data.meta?.total || 0,
+        hasNext: data.next || false,
       };
     } catch (error) {
       console.error("Error fetching cards:", error);
-      return { cards: [], total: 0 };
-    }
-  },
-
-  /**
-   * Fetch cards by set
-   */
-  async getCardsBySet(setSlug: string): Promise<GATCGCard[]> {
-    try {
-      const response = await fetch(`${API_BASE_URL}/cards?set=${setSlug}`);
-      if (!response.ok) throw new Error("Failed to fetch cards by set");
-      const data = await response.json();
-      return data.data || [];
-    } catch (error) {
-      console.error("Error fetching cards by set:", error);
-      return [];
-    }
-  },
-
-  /**
-   * Fetch a single card by UUID
-   */
-  async getCard(uuid: string): Promise<GATCGCard | null> {
-    try {
-      const response = await fetch(`${API_BASE_URL}/cards/${uuid}`);
-      if (!response.ok) throw new Error("Failed to fetch card");
-      const data = await response.json();
-      return data.data || null;
-    } catch (error) {
-      console.error("Error fetching card:", error);
-      return null;
+      return { cards: [], hasNext: false };
     }
   },
 
@@ -108,7 +53,7 @@ export const gatcgApiService = {
    */
   async searchCards(query: string): Promise<GATCGCard[]> {
     try {
-      const response = await fetch(`${API_BASE_URL}/cards?name=${encodeURIComponent(query)}`);
+      const response = await fetch(`${API_BASE_URL}/cards/search?q=${encodeURIComponent(query)}`);
       if (!response.ok) throw new Error("Failed to search cards");
       const data = await response.json();
       return data.data || [];

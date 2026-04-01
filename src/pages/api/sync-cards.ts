@@ -4,35 +4,25 @@ import { supabase } from "@/integrations/supabase/client";
 const API_BASE_URL = "https://api.gatcg.com";
 
 interface GATCGCard {
-  uuid: string;
   name: string;
   slug: string;
-  edition: string;
-  set: {
-    name: string;
-    prefix: string;
-  };
+  classes: string[];
+  cost_memory: number | null;
+  cost_reserve: number | null;
   rarity: string;
   types: string[];
-  subtypes: string[];
-  element: string | null;
-  cost: {
-    memory?: number;
-    reserve?: number;
-  };
+  effect_text: string | null;
+  effect_raw: string | null;
+  flavor: string | null;
+  illustrator: string | null;
+  image: string;
   power: number | null;
   life: number | null;
-  effect_text: string;
-  flavor_text: string | null;
-  image_url: string;
-  illustrator: string;
-}
-
-interface GATCGSet {
-  name: string;
-  prefix: string;
-  slug: string;
-  release_date: string;
+  durability: number | null;
+  editions: Array<{
+    set: string;
+    collector_number: string;
+  }>;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -43,111 +33,126 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     console.log("Starting card sync from Grand Archive API...");
 
-    // Step 1: Fetch and sync sets
-    console.log(`Fetching sets from ${API_BASE_URL}/sets`);
-    const setsResponse = await fetch(`${API_BASE_URL}/sets`);
-    console.log("Sets response status:", setsResponse.status);
-    
-    if (!setsResponse.ok) {
-      const errorText = await setsResponse.text();
-      console.error("Sets fetch error:", errorText);
-      throw new Error(`Failed to fetch sets: ${setsResponse.status} - ${errorText}`);
-    }
-    
-    const setsData = await setsResponse.json();
-    console.log("Sets data structure:", JSON.stringify(setsData, null, 2));
-    const sets: GATCGSet[] = setsData.data || [];
-
-    console.log(`Found ${sets.length} sets`);
-
-    // Insert sets into database
-    for (const set of sets) {
-      const { error } = await supabase
-        .from("sets")
-        .upsert({
-          name: set.name,
-          code: set.prefix,
-          release_date: set.release_date || null,
-        }, {
-          onConflict: "code",
-        });
-
-      if (error) {
-        console.error(`Error inserting set ${set.name}:`, error);
-      }
-    }
-
-    // Step 2: Fetch all cards (paginated)
+    // Fetch all cards using pagination
     let allCards: GATCGCard[] = [];
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 50) { // Safety limit
-      console.log(`Fetching page ${page}...`);
-      const cardsResponse = await fetch(`${API_BASE_URL}/cards?page=${page}&per_page=100`);
-      if (!cardsResponse.ok) break;
+    while (hasMore) {
+      console.log(`Fetching page ${page} from /cards/search...`);
+      const response = await fetch(`${API_BASE_URL}/cards/search?page=${page}&limit=100`);
+      
+      if (!response.ok) {
+        console.error(`Failed to fetch page ${page}: ${response.status}`);
+        break;
+      }
 
-      const cardsData = await cardsResponse.json();
-      const cards: GATCGCard[] = cardsData.data || [];
-
+      const data = await response.json();
+      const cards: GATCGCard[] = data.data || [];
+      
+      console.log(`Page ${page}: Got ${cards.length} cards, hasNext: ${data.next || false}`);
+      
       if (cards.length === 0) {
         hasMore = false;
         break;
       }
 
       allCards = allCards.concat(cards);
+      hasMore = data.next || false;
       page++;
 
-      // Break if we've fetched all cards
-      if (cardsData.meta && cardsData.meta.current_page >= cardsData.meta.last_page) {
-        hasMore = false;
+      // Safety limit
+      if (page > 100) break;
+    }
+
+    console.log(`Total cards fetched: ${allCards.length}`);
+
+    // Extract unique sets from card editions
+    const setsMap = new Map<string, { name: string; code: string }>();
+    
+    for (const card of allCards) {
+      if (card.editions && card.editions.length > 0) {
+        for (const edition of card.editions) {
+          if (edition.set && !setsMap.has(edition.set)) {
+            setsMap.set(edition.set, {
+              name: edition.set,
+              code: edition.set,
+            });
+          }
+        }
       }
     }
 
-    console.log(`Fetched ${allCards.length} total cards`);
+    console.log(`Found ${setsMap.size} unique sets`);
 
-    // Step 3: Get set IDs mapping
+    // Insert sets into database
+    for (const [code, setInfo] of setsMap) {
+      const { error } = await supabase
+        .from("sets")
+        .upsert({
+          name: setInfo.name,
+          code: setInfo.code,
+          release_date: null,
+        }, {
+          onConflict: "code",
+        });
+
+      if (error) {
+        console.error(`Error inserting set ${setInfo.name}:`, error);
+      }
+    }
+
+    // Get set IDs mapping
     const { data: dbSets } = await supabase.from("sets").select("id, code");
     const setIdMap = new Map(dbSets?.map((s) => [s.code, s.id]) || []);
 
-    // Step 4: Insert cards into database
+    // Insert cards into database
     let successCount = 0;
     let errorCount = 0;
 
     for (const card of allCards) {
-      const setId = setIdMap.get(card.set.prefix);
-      if (!setId) {
-        console.error(`Set not found for card: ${card.name} (${card.set.prefix})`);
+      // Get the first edition for this card
+      const firstEdition = card.editions && card.editions.length > 0 ? card.editions[0] : null;
+      
+      if (!firstEdition) {
+        console.log(`Skipping card ${card.name}: no editions`);
         errorCount++;
         continue;
       }
 
-      // Format rarity to match the CHECK constraint ('super rare' -> 'super_rare')
-      const rarityFormatted = card.rarity.toLowerCase().replace(/\s+/g, '_');
+      const setId = setIdMap.get(firstEdition.set);
+      if (!setId) {
+        console.error(`Set not found for card: ${card.name} (${firstEdition.set})`);
+        errorCount++;
+        continue;
+      }
+
+      // Format rarity to match database constraint
+      const rarityFormatted = card.rarity?.toLowerCase().replace(/\s+/g, '_') || 'common';
 
       const { error } = await supabase
         .from("cards")
         .upsert({
           name: card.name,
           set_id: setId,
-          card_number: card.slug.split("-").pop() || "0",
+          card_number: firstEdition.collector_number || "0",
           rarity: rarityFormatted,
-          card_type: card.types[0] || "Unknown",
-          class: card.subtypes && card.subtypes.length > 0 ? card.subtypes[0] : null,
-          element: card.element,
-          cost: card.cost ? card.cost.memory || 0 : 0,
+          card_type: card.types && card.types.length > 0 ? card.types[0] : "Unknown",
+          class: card.classes && card.classes.length > 0 ? card.classes[0] : null,
+          element: null, // Not present in this API structure
+          cost: card.cost_memory || 0,
           power: card.power,
           life: card.life,
-          effect_text: card.effect_text || "",
-          flavor_text: card.flavor_text,
-          image_url: card.image_url,
+          effect_text: card.effect_text || card.effect_raw || "",
+          flavor_text: card.flavor,
+          image_url: card.image ? `https://api.gatcg.com${card.image}` : null,
           illustrator: card.illustrator,
         }, {
           onConflict: "set_id, card_number",
         });
 
       if (error) {
-        console.error(`Error inserting card ${card.name}:`, error);
+        console.error(`Error inserting card ${card.name}:`, error.message);
         errorCount++;
       } else {
         successCount++;
@@ -158,7 +163,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       success: true,
-      sets: sets.length,
+      sets: setsMap.size,
       cards: allCards.length,
       synced: successCount,
       errors: errorCount,
