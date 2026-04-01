@@ -1,36 +1,47 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  try {
-    // Fetch the OpenAPI spec to see available endpoints
-    const specResponse = await fetch("https://api.gatcg.com/openapi.json");
-    
-    if (!specResponse.ok) {
-      return res.status(500).json({
-        error: "Failed to fetch OpenAPI spec",
-        status: specResponse.status,
-      });
+  const baseUrl = "https://api.gatcg.com";
+  
+  // Try common endpoint patterns
+  const endpoints = [
+    "/api/cards",
+    "/api/sets",
+    "/api/v1/cards",
+    "/api/v1/sets",
+    "/card",
+    "/set",
+    "/cards/search",
+    "/sets/all",
+    "/public/cards",
+    "/public/sets",
+    "/data/cards",
+    "/data/sets",
+  ];
+
+  const results = [];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(`${baseUrl}${endpoint}`);
+      if (response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType?.includes("json")) {
+          const data = await response.json();
+          results.push({
+            endpoint,
+            status: response.status,
+            preview: JSON.stringify(data).substring(0, 200),
+          });
+        }
+      }
+    } catch (error) {
+      // Skip errors
     }
-
-    const spec = await specResponse.json();
-    
-    // Extract just the paths and their methods
-    const endpoints = Object.keys(spec.paths || {}).map(path => ({
-      path,
-      methods: Object.keys(spec.paths[path]),
-    }));
-
-    return res.status(200).json({
-      apiTitle: spec.info?.title,
-      apiVersion: spec.info?.version,
-      baseUrl: spec.servers?.[0]?.url,
-      endpoints,
-      fullSpec: spec, // Include full spec for reference
-    });
-  } catch (error) {
-    return res.status(500).json({
-      error: "Test failed",
-      details: error instanceof Error ? error.message : "Unknown error",
-    });
   }
+
+  return res.status(200).json({ 
+    working_endpoints: results,
+    message: "These endpoints returned successful JSON responses"
+  });
 }
