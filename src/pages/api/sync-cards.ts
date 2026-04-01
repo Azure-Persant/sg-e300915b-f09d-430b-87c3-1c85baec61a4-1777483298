@@ -154,7 +154,7 @@ export default async function handler(
 
         // Build full image URL
         const imageUrl = firstEdition.image
-          ? `https://index.gatcg.com${firstEdition.image}`
+          ? `https://api.gatcg.com${firstEdition.image}`
           : null;
 
         // Get card data
