@@ -33,9 +33,10 @@ export default async function handler(
 
     while (hasNext) {
       console.log(`  Fetching page ${page}...`);
-      const response = await fetch(
-        `${API_BASE_URL}/cards/search?page=${page}&limit=100`
-      );
+      const url = `${API_BASE_URL}/cards/search?page=${page}&limit=100`;
+      console.log(`  URL: ${url}`);
+      
+      const response = await fetch(url);
       
       if (!response.ok) {
         console.error(`  ❌ API request failed with status ${response.status}`);
@@ -44,9 +45,17 @@ export default async function handler(
 
       const data = await response.json();
       console.log(`  ✓ Page ${page}: Received ${data.data?.length || 0} cards`);
+      console.log(`  API Response metadata:`, {
+        hasNext: data.hasNext,
+        page: data.page,
+        total: data.total,
+        totalPages: data.totalPages,
+        dataLength: data.data?.length
+      });
       
       allCards.push(...(data.data || []));
       hasNext = data.hasNext || false;
+      console.log(`  Will continue? hasNext=${hasNext}`);
       page++;
     }
 
