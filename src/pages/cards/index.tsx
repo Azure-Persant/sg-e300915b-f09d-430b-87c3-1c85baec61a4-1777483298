@@ -69,7 +69,7 @@ export default function CardsPage() {
 
       toast({
         title: "Sync Complete!",
-        description: `Synced ${data.cardCount} cards from ${data.setCount} sets.`,
+        description: `Synced ${data.totalCards} cards from ${data.totalSets} sets.`,
       });
 
       // Reload data
