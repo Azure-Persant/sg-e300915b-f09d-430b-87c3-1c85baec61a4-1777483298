@@ -113,16 +113,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         continue;
       }
 
+      // Format rarity to match the CHECK constraint ('super rare' -> 'super_rare')
+      const rarityFormatted = card.rarity.toLowerCase().replace(/\s+/g, '_');
+
       const { error } = await supabase
         .from("cards")
         .upsert({
           name: card.name,
           set_id: setId,
           card_number: card.slug.split("-").pop() || "0",
-          rarity: card.rarity.toLowerCase(),
-          type: card.types[0] || "Unknown",
+          rarity: rarityFormatted,
+          card_type: card.types[0] || "Unknown",
+          class: card.subtypes && card.subtypes.length > 0 ? card.subtypes[0] : null,
           element: card.element,
-          cost: card.cost.memory || 0,
+          cost: card.cost ? card.cost.memory || 0 : 0,
           power: card.power,
           life: card.life,
           effect_text: card.effect_text || "",

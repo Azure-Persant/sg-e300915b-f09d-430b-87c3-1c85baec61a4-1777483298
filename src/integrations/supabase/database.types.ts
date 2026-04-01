@@ -58,6 +58,7 @@ export type Database = {
           element: string | null
           flavor_text: string | null
           id: string
+          illustrator: string | null
           image_url: string | null
           life: number | null
           name: string
@@ -75,6 +76,7 @@ export type Database = {
           element?: string | null
           flavor_text?: string | null
           id?: string
+          illustrator?: string | null
           image_url?: string | null
           life?: number | null
           name: string
@@ -92,6 +94,7 @@ export type Database = {
           element?: string | null
           flavor_text?: string | null
           id?: string
+          illustrator?: string | null
           image_url?: string | null
           life?: number | null
           name?: string
