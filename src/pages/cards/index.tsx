@@ -6,18 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cardService, type CardWithSet, type Set } from "@/services/cardService";
-import { Search, Filter } from "lucide-react";
+import { Search, Filter, RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { useToast } from "@/hooks/use-toast";
 
 export default function CardsPage() {
   const [cards, setCards] = useState<CardWithSet[]>([]);
   const [sets, setSets] = useState<Set[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedSet, setSelectedSet] = useState<string>("all");
   const [selectedRarity, setSelectedRarity] = useState<string>("all");
   const [selectedType, setSelectedType] = useState<string>("all");
   const [selectedElement, setSelectedElement] = useState<string>("all");
+  const { toast } = useToast();
 
   useEffect(() => {
     loadData();
@@ -37,8 +40,49 @@ export default function CardsPage() {
       setCards(cardsData);
     } catch (error) {
       console.error("Error loading data:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load card data",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSync = async () => {
+    console.log("=== SYNC BUTTON CLICKED ===");
+    setSyncing(true);
+    try {
+      console.log("Calling /api/sync-cards...");
+      const response = await fetch("/api/sync-cards", {
+        method: "POST",
+      });
+
+      console.log("Response status:", response.status);
+      const data = await response.json();
+      console.log("Response data:", data);
+
+      if (!response.ok) {
+        throw new Error(data.error || data.details || "Sync failed");
+      }
+
+      toast({
+        title: "Sync Complete!",
+        description: `Synced ${data.cardCount} cards from ${data.setCount} sets.`,
+      });
+
+      // Reload data
+      await loadData();
+    } catch (error) {
+      console.error("=== SYNC ERROR ===", error);
+      toast({
+        title: "Sync Failed",
+        description: error instanceof Error ? error.message : "Sync failed",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -66,8 +110,9 @@ export default function CardsPage() {
       case "common": return "bg-slate-500";
       case "uncommon": return "bg-green-500";
       case "rare": return "bg-blue-500";
-      case "super rare": return "bg-purple-500";
-      case "ultra rare": return "bg-amber-500";
+      case "super_rare": return "bg-purple-500";
+      case "ultra_rare": return "bg-amber-500";
+      case "champion_rare": return "bg-red-500";
       default: return "bg-gray-500";
     }
   };
@@ -77,11 +122,22 @@ export default function CardsPage() {
       <Navigation />
       <main className="min-h-screen bg-gradient-to-b from-background to-secondary/10">
         <div className="container py-8">
-          <div className="mb-8">
-            <h1 className="text-4xl font-heading font-bold mb-2">Card Database</h1>
-            <p className="text-muted-foreground">
-              Browse all Grand Archive cards from every set
-            </p>
+          <div className="mb-8 flex items-center justify-between">
+            <div>
+              <h1 className="text-4xl font-heading font-bold mb-2">Card Database</h1>
+              <p className="text-muted-foreground">
+                Browse all Grand Archive cards from every set
+              </p>
+            </div>
+            <Button
+              onClick={handleSync}
+              disabled={syncing}
+              variant="outline"
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Syncing..." : "Sync Card Database"}
+            </Button>
           </div>
 
           <div className="grid lg:grid-cols-4 gap-6">
