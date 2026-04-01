@@ -42,35 +42,34 @@ export default function CardsPage() {
   const handleSync = async () => {
     try {
       setSyncing(true);
-      console.log("=== SYNC BUTTON CLICKED ===");
-      console.log("Calling /api/sync-cards...");
-      
-      const response = await fetch("/api/sync-cards", {
-        method: "POST",
-      });
-
+      console.log("Starting sync...");
+      const response = await fetch("/api/sync-cards");
       console.log("Response status:", response.status);
+      
+      // Check content type to see if we got HTML instead of JSON
+      const contentType = response.headers.get("content-type");
+      console.log("Content-Type:", contentType);
+      
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Got non-JSON response:", text.substring(0, 500));
+        throw new Error("API returned HTML instead of JSON. Check server logs for errors.");
+      }
+      
       const data = await response.json();
       console.log("Response data:", data);
 
       if (!response.ok) {
-        console.log("=== SYNC ERROR ===");
-        console.log("Error:", data.error || data.details);
-        throw new Error(data.error || data.details || "Sync failed");
+        throw new Error(data.error || "Sync failed");
       }
-
-      console.log("=== SYNC SUCCESS ===");
-      console.log("Total cards:", data.totalCards);
-      console.log("Total sets:", data.totalSets);
 
       toast({
         title: "Sync Complete!",
         description: `Synced ${data.totalCards || 'unknown'} cards from ${data.totalSets || 'unknown'} sets.`,
       });
 
-      await loadCards();
+      loadCards();
     } catch (error) {
-      console.log("=== SYNC ERROR ===");
       console.error("Sync error:", error);
       toast({
         variant: "destructive",
