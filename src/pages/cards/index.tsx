@@ -43,7 +43,9 @@ export default function CardsPage() {
     try {
       setSyncing(true);
       console.log("Starting sync...");
-      const response = await fetch("/api/sync-cards");
+      const response = await fetch("/api/sync-cards", {
+        method: "POST",
+      });
       console.log("Response status:", response.status);
       
       // Check content type to see if we got HTML instead of JSON
