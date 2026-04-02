@@ -35,9 +35,9 @@ export const cardService = {
   }) {
     let query = supabase
       .from("cards")
-      .select("*, sets(*)")
+      .select("*, sets(*)", { count: "exact" })
       .order("name", { ascending: true })
-      .limit(10000); // Remove Supabase's default 1000 row limit
+      .range(0, 9999); // Fetch first 10,000 rows (0-indexed)
 
     if (filters?.setId) {
       query = query.eq("set_id", filters.setId);
@@ -55,8 +55,8 @@ export const cardService = {
       query = query.ilike("name", `%${filters.search}%`);
     }
 
-    const { data, error } = await query;
-    console.log("getCards:", { data, error });
+    const { data, error, count } = await query;
+    console.log("getCards:", { dataLength: data?.length, count, error });
     if (error) throw error;
     return (data || []) as CardWithSet[];
   },
