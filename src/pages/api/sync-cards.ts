@@ -129,7 +129,7 @@ export default async function handler(
     if (cardsToInsert.length > 0) {
       const { error: cardsError } = await supabase
         .from("cards")
-        .upsert(cardsToInsert, { onConflict: "slug" });
+        .upsert(cardsToInsert);
 
       if (cardsError) {
         console.error("Error inserting cards:", cardsError);
