@@ -240,33 +240,72 @@ export default function CardsPage() {
               </div>
               
               {/* Pagination Controls */}
-              <div className="flex justify-center items-center gap-4 mt-8">
-                <Button
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  variant="outline"
-                  className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
-                >
-                  Previous
-                </Button>
-                
-                <div className="flex items-center gap-2">
-                  <span className="text-white">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <span className="text-slate-400">
-                    ({cards.length} cards)
-                  </span>
+              <div className="flex flex-col items-center gap-4 mt-8">
+                {/* Page Navigation */}
+                <div className="flex items-center gap-4">
+                  <Button
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    variant="outline"
+                    className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+                  >
+                    Previous
+                  </Button>
+                  
+                  <div className="flex items-center gap-3">
+                    <span className="text-white">Page</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={currentPage}
+                      onChange={(e) => {
+                        const page = parseInt(e.target.value);
+                        if (page >= 1 && page <= totalPages) {
+                          handlePageChange(page);
+                        }
+                      }}
+                      className="w-20 text-center bg-slate-800 border-slate-700 text-white"
+                    />
+                    <span className="text-white">of {totalPages}</span>
+                  </div>
+                  
+                  <Button
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                    variant="outline"
+                    className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+                  >
+                    Next
+                  </Button>
                 </div>
                 
-                <Button
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                  variant="outline"
-                  className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
-                >
-                  Next
-                </Button>
+                {/* Quick Jump Buttons */}
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-slate-400">Jump to:</span>
+                  <Button
+                    onClick={() => handlePageChange(1)}
+                    disabled={currentPage === 1}
+                    variant="ghost"
+                    size="sm"
+                    className="text-cyan-400 hover:text-cyan-300 hover:bg-slate-800"
+                  >
+                    First
+                  </Button>
+                  <Button
+                    onClick={() => handlePageChange(totalPages)}
+                    disabled={currentPage === totalPages}
+                    variant="ghost"
+                    size="sm"
+                    className="text-cyan-400 hover:text-cyan-300 hover:bg-slate-800"
+                  >
+                    Last
+                  </Button>
+                  <span className="text-slate-500 mx-2">|</span>
+                  <span className="text-slate-400">
+                    Showing {((currentPage - 1) * cardsPerPage) + 1}-{Math.min(currentPage * cardsPerPage, cards.length)} of {totalPages * cardsPerPage} cards
+                  </span>
+                </div>
               </div>
             </>
           )}

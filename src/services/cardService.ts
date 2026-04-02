@@ -36,7 +36,8 @@ export const cardService = {
     let query = supabase
       .from("cards")
       .select("*, sets(*)")
-      .order("name", { ascending: true });
+      .order("name", { ascending: true })
+      .limit(10000); // Remove Supabase's default 1000 row limit
 
     if (filters?.setId) {
       query = query.eq("set_id", filters.setId);
