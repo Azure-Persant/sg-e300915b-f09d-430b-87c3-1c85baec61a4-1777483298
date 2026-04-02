@@ -16,18 +16,35 @@ export default function CardsPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const cardsPerPage = 100;
   const { toast } = useToast();
   const router = useRouter();
 
   useEffect(() => {
     loadCards();
-  }, []);
+  }, [currentPage]);
 
   const loadCards = async () => {
     try {
       setLoading(true);
       const data = await cardService.getCards();
-      setCards(data);
+      
+      // Calculate pagination
+      const filteredData = searchQuery 
+        ? data.filter((card) => card.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        : data;
+      
+      const total = Math.ceil(filteredData.length / cardsPerPage);
+      setTotalPages(total);
+      
+      // Get cards for current page
+      const startIndex = (currentPage - 1) * cardsPerPage;
+      const endIndex = startIndex + cardsPerPage;
+      const paginatedCards = filteredData.slice(startIndex, endIndex);
+      
+      setCards(paginatedCards);
     } catch (error) {
       toast({
         variant: "destructive",
@@ -105,6 +122,17 @@ export default function CardsPage() {
     card.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    setCurrentPage(1);
+    loadCards();
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <>
       <SEO
@@ -144,7 +172,7 @@ export default function CardsPage() {
                 type="text"
                 placeholder="Search cards..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => handleSearch(e.target.value)}
                 className="pl-10 bg-slate-800 border-slate-700 text-white placeholder:text-slate-400"
               />
             </div>
@@ -154,63 +182,93 @@ export default function CardsPage() {
             <div className="flex justify-center items-center py-20">
               <Loader2 className="h-8 w-8 animate-spin text-cyan-500" />
             </div>
-          ) : filteredCards.length === 0 ? (
+          ) : cards.length === 0 ? (
             <div className="text-center py-20">
               <p className="text-slate-400 text-lg">
-                {cards.length === 0 
-                  ? "No cards found. Click 'Sync Card Database' to import cards."
-                  : "No cards match your search."}
+                No cards found. Click 'Sync Card Database' to import cards.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {filteredCards.map((card) => (
-                <Card
-                  key={card.id}
-                  className="bg-slate-800 border-slate-700 hover:border-cyan-500 transition-all cursor-pointer"
-                  onClick={() => router.push(`/cards/${card.id}`)}
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {cards.map((card) => (
+                  <Card
+                    key={card.id}
+                    className="bg-slate-800 border-slate-700 hover:border-cyan-500 transition-all cursor-pointer"
+                    onClick={() => router.push(`/cards/${card.id}`)}
+                  >
+                    <CardHeader>
+                      <CardTitle className="text-white text-lg">{card.name}</CardTitle>
+                      <div className="flex gap-2 mt-2">
+                        {card.card_type && (
+                          <Badge variant="secondary" className="bg-slate-700">
+                            {card.card_type}
+                          </Badge>
+                        )}
+                        {card.rarity && (
+                          <Badge 
+                            variant="secondary"
+                            className={
+                              card.rarity === "common" ? "bg-gray-600" :
+                              card.rarity === "uncommon" ? "bg-green-600" :
+                              card.rarity === "rare" ? "bg-blue-600" :
+                              card.rarity === "super_rare" ? "bg-purple-600" :
+                              "bg-amber-600"
+                            }
+                          >
+                            {card.rarity.replace("_", " ").toUpperCase()}
+                          </Badge>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {card.image_url && (
+                        <img
+                          src={card.image_url}
+                          alt={card.name}
+                          className="w-full rounded-lg mb-3"
+                        />
+                      )}
+                      {card.effect_text && (
+                        <p className="text-slate-300 text-sm line-clamp-3">
+                          {card.effect_text}
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              
+              {/* Pagination Controls */}
+              <div className="flex justify-center items-center gap-4 mt-8">
+                <Button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  variant="outline"
+                  className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
                 >
-                  <CardHeader>
-                    <CardTitle className="text-white text-lg">{card.name}</CardTitle>
-                    <div className="flex gap-2 mt-2">
-                      {card.card_type && (
-                        <Badge variant="secondary" className="bg-slate-700">
-                          {card.card_type}
-                        </Badge>
-                      )}
-                      {card.rarity && (
-                        <Badge 
-                          variant="secondary"
-                          className={
-                            card.rarity === "common" ? "bg-gray-600" :
-                            card.rarity === "uncommon" ? "bg-green-600" :
-                            card.rarity === "rare" ? "bg-blue-600" :
-                            card.rarity === "super_rare" ? "bg-purple-600" :
-                            "bg-amber-600"
-                          }
-                        >
-                          {card.rarity.replace("_", " ").toUpperCase()}
-                        </Badge>
-                      )}
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {card.image_url && (
-                      <img
-                        src={card.image_url}
-                        alt={card.name}
-                        className="w-full rounded-lg mb-3"
-                      />
-                    )}
-                    {card.effect_text && (
-                      <p className="text-slate-300 text-sm line-clamp-3">
-                        {card.effect_text}
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                  Previous
+                </Button>
+                
+                <div className="flex items-center gap-2">
+                  <span className="text-white">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <span className="text-slate-400">
+                    ({cards.length} cards)
+                  </span>
+                </div>
+                
+                <Button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  variant="outline"
+                  className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+                >
+                  Next
+                </Button>
+              </div>
+            </>
           )}
         </main>
       </div>
