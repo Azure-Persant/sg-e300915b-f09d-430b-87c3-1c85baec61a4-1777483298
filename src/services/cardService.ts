@@ -33,32 +33,56 @@ export const cardService = {
     element?: string;
     search?: string;
   }) {
-    let query = supabase
-      .from("cards")
-      .select("*, sets(*)", { count: "exact" })
-      .order("name", { ascending: true })
-      .range(0, 9999); // Fetch first 10,000 rows (0-indexed)
+    const allCards: CardWithSet[] = [];
+    const batchSize = 1000;
+    let from = 0;
+    let hasMore = true;
 
-    if (filters?.setId) {
-      query = query.eq("set_id", filters.setId);
-    }
-    if (filters?.rarity) {
-      query = query.eq("rarity", filters.rarity);
-    }
-    if (filters?.cardType) {
-      query = query.eq("card_type", filters.cardType);
-    }
-    if (filters?.element) {
-      query = query.eq("element", filters.element);
-    }
-    if (filters?.search) {
-      query = query.ilike("name", `%${filters.search}%`);
+    // Fetch all cards in batches of 1000 to bypass Supabase's limit
+    while (hasMore) {
+      let query = supabase
+        .from("cards")
+        .select("*, sets(*)")
+        .order("name", { ascending: true })
+        .range(from, from + batchSize - 1);
+
+      if (filters?.setId) {
+        query = query.eq("set_id", filters.setId);
+      }
+      if (filters?.rarity) {
+        query = query.eq("rarity", filters.rarity);
+      }
+      if (filters?.cardType) {
+        query = query.eq("card_type", filters.cardType);
+      }
+      if (filters?.element) {
+        query = query.eq("element", filters.element);
+      }
+      if (filters?.search) {
+        query = query.ilike("name", `%${filters.search}%`);
+      }
+
+      const { data, error } = await query;
+      
+      if (error) {
+        console.error("getCards batch error:", error);
+        throw error;
+      }
+
+      if (data && data.length > 0) {
+        allCards.push(...(data as CardWithSet[]));
+        console.log(`Fetched batch: ${from}-${from + data.length} (${data.length} cards)`);
+        
+        // If we got less than batchSize, we've reached the end
+        hasMore = data.length === batchSize;
+        from += batchSize;
+      } else {
+        hasMore = false;
+      }
     }
 
-    const { data, error, count } = await query;
-    console.log("getCards:", { dataLength: data?.length, count, error });
-    if (error) throw error;
-    return (data || []) as CardWithSet[];
+    console.log(`getCards: Total fetched ${allCards.length} cards`);
+    return allCards;
   },
 
   async getCardById(cardId: string) {
