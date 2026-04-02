@@ -28,68 +28,99 @@ export default async function handler(
     const data = await response.json();
     console.log(`✓ Page ${page}: Received ${data.data?.length || 0} cards`);
 
-    // Extract unique sets from this batch
-    const setsMap = new Map<string, any>();
+    console.log(`\n[STEP 2] Processing ${data.data.length} cards from page ${page}...`);
     
-    for (const card of data.data || []) {
-      if (card.editions && Array.isArray(card.editions)) {
-        for (const edition of card.editions) {
-          if (edition.set) {
-            const setData = edition.set;
-            if (!setsMap.has(setData.slug)) {
-              setsMap.set(setData.slug, {
-                slug: setData.slug,
-                name: setData.name,
-                release_date: setData.release_date || null,
-              });
-            }
-          }
+    // Extract unique sets from this batch
+    const uniqueSets = new Map<string, any>();
+    data.data.forEach((card: any) => {
+      const edition = card.editions?.[0];
+      if (edition?.set) {
+        const setCode = edition.set.id;
+        if (!uniqueSets.has(setCode)) {
+          uniqueSets.set(setCode, {
+            code: setCode,
+            name: edition.set.name,
+            release_date: edition.set.release_date || null,
+          });
         }
       }
-    }
+    });
 
-    // Insert sets
-    console.log(`Inserting ${setsMap.size} sets...`);
-    const setsToInsert = Array.from(setsMap.values());
-    
-    if (setsToInsert.length > 0) {
-      const { error: setsError } = await supabase
+    console.log(`  Found ${uniqueSets.size} unique sets in this batch`);
+
+    // Step 2a: Insert sets first (upsert to avoid duplicates)
+    if (uniqueSets.size > 0) {
+      const setsArray = Array.from(uniqueSets.values());
+      console.log(`  Upserting ${setsArray.length} sets...`);
+      
+      const { data: insertedSets, error: setsError } = await supabase
         .from("sets")
-        .upsert(setsToInsert, { onConflict: "slug" });
+        .upsert(setsArray, { onConflict: "code" })
+        .select("id, code");
 
       if (setsError) {
-        console.error("Error inserting sets:", setsError);
+        console.error("  ❌ Error upserting sets:", setsError);
+        throw new Error(`Failed to upsert sets: ${setsError.message}`);
       }
+
+      console.log(`  ✓ Upserted ${insertedSets?.length || 0} sets`);
     }
 
-    // Process and insert cards from this batch
-    const cardsToInsert: any[] = [];
+    // Step 2b: Fetch set IDs for card insertion
+    const { data: allSets, error: fetchSetsError } = await supabase
+      .from("sets")
+      .select("id, code");
 
-    for (const card of data.data || []) {
+    if (fetchSetsError) {
+      console.error("  ❌ Error fetching sets:", fetchSetsError);
+      throw new Error(`Failed to fetch sets: ${fetchSetsError.message}`);
+    }
+
+    // Create a map of set code to set ID
+    const setCodeToId = new Map<string, string>();
+    allSets?.forEach(set => {
+      setCodeToId.set(set.code, set.id);
+    });
+
+    console.log(`  Mapped ${setCodeToId.size} set codes to IDs`);
+
+    // Step 2c: Process cards with set_id references
+    const cardsToInsert = data.data.map((card: any) => {
       const firstEdition = card.editions?.[0];
-      if (!firstEdition) continue;
+      if (!firstEdition) return null;
 
+      const setCode = firstEdition.set?.id;
+      const setId = setCode ? setCodeToId.get(setCode) : null;
+
+      if (!setId) {
+        console.warn(`  ⚠️ No set_id found for card: ${card.name} (set code: ${setCode})`);
+        return null;
+      }
+
+      // Build full image URL
       const imageUrl = firstEdition.image
         ? `https://api.gatcg.com${firstEdition.image}`
         : null;
 
-      cardsToInsert.push({
-        slug: card.slug,
+      return {
+        set_id: setId,
         name: card.name,
-        card_number: firstEdition.collector_number || null,
-        type: firstEdition.card_type || "Unknown",
-        class: firstEdition.card_class?.[0] || null,
-        rarity: firstEdition.rarity || "Common",
-        effect_text: firstEdition.effect_text || "",
-        flavor_text: firstEdition.flavor_text || null,
+        card_number: firstEdition.collector_number || "UNKNOWN",
+        element: card.element || null,
+        card_type: card.type || "Unknown",
+        class: card.class || null,
+        rarity: firstEdition.rarity || "UNKNOWN",
+        cost: card.cost?.memory !== undefined ? card.cost.memory : null,
+        power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
+        life: card.stats?.HP !== undefined ? card.stats.HP : null,
+        effect_text: card.effect?.description || null,
+        flavor_text: card.flavor_text || null,
         image_url: imageUrl,
-        set_id: firstEdition.set?.slug || null,
-        cost: firstEdition.cost || null,
-        power: firstEdition.power || null,
-        defense: firstEdition.defense || null,
-        life: firstEdition.life || null,
-      });
-    }
+        illustrator: firstEdition.artist || null,
+      };
+    }).filter(Boolean); // Remove null entries
+
+    console.log(`  Prepared ${cardsToInsert.length} cards for insertion`);
 
     console.log(`Inserting ${cardsToInsert.length} cards...`);
     let insertedCount = 0;
