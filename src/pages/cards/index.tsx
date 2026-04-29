@@ -57,61 +57,54 @@ export default function CardsPage() {
   };
 
   const handleSync = async () => {
+    setSyncing(true);
     try {
-      setSyncing(true);
-      console.log("Starting sync...");
-      
+      toast({
+        title: "Syncing card database...",
+        description: "This may take a few minutes. Please wait.",
+      });
+
       let currentPage = 1;
       let hasMore = true;
       let totalProcessed = 0;
-      let totalPages = 1;
 
       while (hasMore) {
-        console.log(`Syncing page ${currentPage}...`);
-        
         const response = await fetch("/api/sync-cards", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ page: currentPage, limit: 100 }),
         });
 
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: "Unknown error" }));
-          throw new Error(error.error || `HTTP ${response.status}`);
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || "Sync failed");
         }
 
-        const data = await response.json();
-        console.log(`Page ${currentPage} complete:`, data);
+        totalProcessed += result.processedInBatch || 0;
+        hasMore = result.hasMore;
 
-        totalProcessed += data.processedInBatch || 0;
-        totalPages = data.totalPages || totalPages;
-        hasMore = data.hasMore || false;
-
-        // Show progress toast
         toast({
-          title: `Syncing... (${currentPage}/${totalPages})`,
-          description: `Processed ${totalProcessed} cards so far...`,
+          title: `Processing page ${currentPage} of ${result.totalPages}...`,
+          description: `${totalProcessed} cards synced so far`,
         });
 
         currentPage++;
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      // Final success toast
       toast({
-        title: "Sync Complete!",
-        description: `Successfully synced ${totalProcessed} cards from ${totalPages} pages.`,
+        title: "Sync complete!",
+        description: `Successfully synced ${totalProcessed} cards from all sets`,
       });
 
-      loadCards();
+      // Reload cards after sync
+      await loadCards();
     } catch (error) {
       console.error("Sync error:", error);
       toast({
+        title: "Sync failed",
+        description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
-        title: "Sync Failed",
-        description: error instanceof Error ? error.message : "Failed to sync cards",
       });
     } finally {
       setSyncing(false);
