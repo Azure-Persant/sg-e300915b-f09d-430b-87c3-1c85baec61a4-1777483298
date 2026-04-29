@@ -14,12 +14,13 @@ export default async function handler(
   // Helper function to map rarity numbers to names
   const mapRarityNumber = (rarityNum: number): string => {
     const rarityMap: Record<number, string> = {
-      1: "common",
-      2: "rare",
-      3: "super_rare",
-      4: "ultra_rare",
-      5: "secret_rare",
-      9: "promo",
+      1: "C",      // Common
+      2: "U",      // Uncommon
+      3: "R",      // Rare
+      4: "SR",     // Super Rare
+      5: "UR",     // Ultra Rare
+      6: "ScR",    // Secret Rare
+      9: "P",      // Promo
     };
     return rarityMap[rarityNum] || "UNKNOWN";
   };
@@ -97,50 +98,52 @@ export default async function handler(
 
     console.log(`  Mapped ${setCodeToId.size} set codes to IDs`);
 
-    // Step 2c: Process cards with set_id references
-    const cardsToInsert = data.data.map((card: any) => {
-      const firstEdition = card.editions?.[0];
-      if (!firstEdition) return null;
+    // Step 2c: Process cards with set_id references - handle ALL editions
+    const cardsToInsert: any[] = [];
+    
+    data.data.forEach((card: any) => {
+      // Process EACH edition as a separate database entry
+      card.editions?.forEach((edition: any) => {
+        const setCode = edition.set?.id;
+        const setId = setCode ? setCodeToId.get(setCode) : null;
 
-      const setCode = firstEdition.set?.id;
-      const setId = setCode ? setCodeToId.get(setCode) : null;
+        if (!setId) {
+          console.warn(`  ⚠️ No set_id found for card: ${card.name} (set code: ${setCode})`);
+          return;
+        }
 
-      if (!setId) {
-        console.warn(`  ⚠️ No set_id found for card: ${card.name} (set code: ${setCode})`);
-        return null;
-      }
+        // Build full image URL
+        const imageUrl = edition.image
+          ? `https://api.gatcg.com${edition.image}`
+          : null;
 
-      // Build full image URL
-      const imageUrl = firstEdition.image
-        ? `https://api.gatcg.com${firstEdition.image}`
-        : null;
+        // Create a card entry for this specific edition/printing
+        cardsToInsert.push({
+          set_id: setId,
+          name: card.name || "Unknown",
+          card_number: edition.collector_number || "UNKNOWN",
+          element: card.element || null,
+          card_type: Array.isArray(card.types) && card.types.length > 0 
+            ? card.types.join(", ") 
+            : "Unknown",
+          class: Array.isArray(card.classes) && card.classes.length > 0 
+            ? card.classes.join(", ") 
+            : null,
+          rarity: typeof edition.rarity === 'number' 
+            ? mapRarityNumber(edition.rarity)
+            : "UNKNOWN",
+          cost: card.cost?.memory !== undefined ? card.cost.memory : null,
+          power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
+          life: card.stats?.HP !== undefined ? card.stats.HP : null,
+          effect_text: card.effect || null,
+          flavor_text: card.flavor || null,
+          image_url: imageUrl,
+          illustrator: edition.illustrator || null,
+        });
+      });
+    });
 
-      // Parse card data correctly from API structure
-      return {
-        set_id: setId,
-        name: card.name || "Unknown",
-        card_number: firstEdition.collector_number || "UNKNOWN",
-        element: card.element || null,
-        card_type: Array.isArray(card.types) && card.types.length > 0 
-          ? card.types.join(", ") 
-          : "Unknown",
-        class: Array.isArray(card.classes) && card.classes.length > 0 
-          ? card.classes.join(", ") 
-          : null,
-        rarity: typeof firstEdition.rarity === 'number' 
-          ? mapRarityNumber(firstEdition.rarity)
-          : "UNKNOWN",
-        cost: card.cost?.memory !== undefined ? card.cost.memory : null,
-        power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
-        life: card.stats?.HP !== undefined ? card.stats.HP : null,
-        effect_text: card.effect || null,
-        flavor_text: card.flavor || null,
-        image_url: imageUrl,
-        illustrator: firstEdition.illustrator || null,
-      };
-    }).filter(Boolean); // Remove null entries
-
-    console.log(`  Prepared ${cardsToInsert.length} cards for insertion`);
+    console.log(`  Prepared ${cardsToInsert.length} card printings for insertion`);
 
     console.log(`Inserting ${cardsToInsert.length} cards...`);
     let insertedCount = 0;
