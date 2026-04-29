@@ -102,14 +102,15 @@ export default async function handler(
         ? `https://api.gatcg.com${firstEdition.image}`
         : null;
 
+      // Parse card data correctly from API structure
       return {
         set_id: setId,
-        name: card.name,
+        name: card.name || "Unknown",
         card_number: firstEdition.collector_number || "UNKNOWN",
-        element: card.element || null,
-        card_type: card.type || "Unknown",
-        class: card.class || null,
-        rarity: firstEdition.rarity || "UNKNOWN",
+        element: card.element?.name || null,
+        card_type: card.type?.name || "Unknown",
+        class: card.class?.name || null,
+        rarity: firstEdition.rarity?.name || "UNKNOWN",
         cost: card.cost?.memory !== undefined ? card.cost.memory : null,
         power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
         life: card.stats?.HP !== undefined ? card.stats.HP : null,
