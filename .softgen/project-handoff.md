@@ -45,7 +45,7 @@ Build a comprehensive Grand Archive TCG collection management platform similar t
 
 ### Tables
 
-#### `cards` (4,426 records)
+#### `cards` (3,859 records)
 Stores all Grand Archive TCG card data synced from the official API.
 
 ```sql
@@ -70,7 +70,7 @@ Stores all Grand Archive TCG card data synced from the official API.
 UNIQUE CONSTRAINT: (set_id, card_number)
 ```
 
-#### `sets` (71 records)
+#### `sets` (38 records)
 Card set information (e.g., "Dawn of Ashes", "Fractured Crown").
 
 ```sql
@@ -157,17 +157,28 @@ Located in: `src/pages/api/sync-cards.ts`
 2. Extracts unique sets from card data
 3. Upserts sets first (prevents FK constraint errors)
 4. Maps set codes to set IDs
-5. Inserts cards with proper set_id references
-6. Progress tracked via frontend toasts
+5. Processes ALL editions from each card's `editions` array
+6. Deduplicates cards within each batch to prevent "cannot affect row a second time" errors
+7. Upserts cards with proper set_id references
+8. Progress tracked via frontend toasts
+
+**Important Notes:**
+- The `/cards/search` API endpoint returns multiple editions per card in the `editions` array
+- Each edition is processed as a separate database entry (same card, different sets/printings)
+- Deduplication happens within each batch based on `(set_id, card_number)` combination
+- Missing sets are now manually added if discovered (e.g., DOA First Edition, SP2)
 
 **To trigger sync:** Navigate to `/cards` and click "Sync Card Database" button
 
 **Sync Stats:**
 - Total API Pages: 75
-- Cards Per Page: ~30-100
-- Total Cards Synced: 2,205 (on latest run)
-- Total Cards in DB: 4,426 (includes historical syncs)
-- Sync Duration: ~2-3 minutes
+- Cards Per Page: ~30-100 (varies)
+- Total Cards Synced: 3,861 printings
+- Unique Card Names: 2,222
+- Total Sets Synced: 38
+- CSR Rarity Mapping: ✅ Complete
+- Missing Sets Fixed: DOA First Edition (275 cards), Supporter Pack 2 (43 cards)
+- Sync Duration: ~3-5 minutes
 
 ---
 
@@ -234,15 +245,14 @@ src/
 - **Search:** Real-time card name search
 - **Card Display:** Image, name, rarity, cost, power/life stats
 - **Navigation:** Previous/Next, jump to page, First/Last buttons
+- **All Printings:** Captures all editions/printings of each card (e.g., 6 Aesan Protector versions)
 
 **Technical Notes:**
 - Supabase has a hard 1,000 row limit per request
 - Implemented batched fetching in `cardService.getCards()`:
   ```typescript
-  // Fetches cards in 1000-row batches until all are retrieved
   while (hasMore) {
     query.range(from, from + 999);
-    // ... combine results
   }
   ```
 
@@ -372,11 +382,10 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 
 ## 🐛 Known Issues & Limitations
 
-### 1. Card Sync Duplicates
-**Issue:** Running sync multiple times adds duplicate cards  
-**Impact:** Database has 4,426 cards but should have ~2,235  
-**Workaround:** Unique constraint prevents true duplicates (same set_id + card_number)  
-**Fix Needed:** Check existing cards before inserting, or use UPSERT properly
+### 1. Card Sync - API Inconsistency
+**Issue:** Some cards return all editions in the API, others return only 1  
+**Impact:** Required manual addition of missing sets (DOA First Edition, SP2)  
+**Status:** ✅ Fixed - Missing sets manually added, sync now captures all available cards
 
 ### 2. Image Loading Performance
 **Issue:** Loading 100 card images per page can be slow on poor connections  
@@ -387,7 +396,7 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 - Implement image CDN/optimization
 
 ### 3. Search Performance
-**Issue:** Client-side search on 4,426 cards causes UI lag  
+**Issue:** Client-side search on 3,861 cards causes UI lag  
 **Impact:** Typing in search box feels unresponsive  
 **Fix Needed:** Move search to backend (server-side filtering)
 
@@ -497,6 +506,7 @@ pm2 restart all      # Restart PM2 services (in dev)
 2. Check PM2 logs: `pm2 logs --lines 100`
 3. Check browser console for errors
 4. Verify Supabase RLS policies allow inserts
+5. Check if sets exist in `sets` table (common cause of "No set_id found" warnings)
 
 ### Database Issues
 1. Run: `<get_database_schema></get_database_schema>`
@@ -526,7 +536,7 @@ pm2 restart all      # Restart PM2 services (in dev)
 
 **Project Type:** Grand Archive TCG Collection Manager  
 **Status:** Active Development  
-**Last Major Update:** 2026-04-29 - Implemented batched card fetching
+**Last Major Update:** 2026-04-29 - Card sync complete with all editions (3,861 cards, 38 sets)
 
 ---
 
