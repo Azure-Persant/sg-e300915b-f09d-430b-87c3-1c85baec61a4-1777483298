@@ -150,9 +150,21 @@ export default async function handler(
     let errorCount = 0;
 
     if (cardsToInsert.length > 0) {
+      // Deduplicate based on set_id + card_number to avoid "cannot affect row a second time" error
+      const uniqueCards = new Map<string, any>();
+      cardsToInsert.forEach(card => {
+        const key = `${card.set_id}_${card.card_number}`;
+        if (!uniqueCards.has(key)) {
+          uniqueCards.set(key, card);
+        }
+      });
+      
+      const deduplicatedCards = Array.from(uniqueCards.values());
+      console.log(`  Deduplicated ${cardsToInsert.length} → ${deduplicatedCards.length} cards`);
+
       const { error: cardsError } = await supabase
         .from("cards")
-        .upsert(cardsToInsert, { onConflict: "set_id,card_number" });
+        .upsert(deduplicatedCards, { onConflict: "set_id,card_number" });
 
       if (cardsError) {
         console.error("Error inserting cards:", cardsError);
@@ -162,9 +174,9 @@ export default async function handler(
           details: cardsError.details,
           hint: cardsError.hint,
         });
-        errorCount = cardsToInsert.length;
+        errorCount = deduplicatedCards.length;
       } else {
-        insertedCount = cardsToInsert.length;
+        insertedCount = deduplicatedCards.length;
       }
     }
 
