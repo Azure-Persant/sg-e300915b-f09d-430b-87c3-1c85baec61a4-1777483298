@@ -20,6 +20,7 @@ export default async function handler(
       4: "SR",     // Super Rare
       5: "UR",     // Ultra Rare
       6: "ScR",    // Secret Rare
+      7: "CSR",    // Collector's Super Rare
       9: "P",      // Promo
     };
     return rarityMap[rarityNum] || "UNKNOWN";
