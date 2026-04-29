@@ -156,6 +156,12 @@ export default async function handler(
 
       if (cardsError) {
         console.error("Error inserting cards:", cardsError);
+        console.error("Error details:", {
+          message: cardsError.message,
+          code: cardsError.code,
+          details: cardsError.details,
+          hint: cardsError.hint,
+        });
         errorCount = cardsToInsert.length;
       } else {
         insertedCount = cardsToInsert.length;
