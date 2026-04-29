@@ -11,6 +11,19 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  // Helper function to map rarity numbers to names
+  const mapRarityNumber = (rarityNum: number): string => {
+    const rarityMap: Record<number, string> = {
+      1: "common",
+      2: "rare",
+      3: "super_rare",
+      4: "ultra_rare",
+      5: "secret_rare",
+      9: "promo",
+    };
+    return rarityMap[rarityNum] || "UNKNOWN";
+  };
+
   console.log("=== SYNC STARTED ===");
   const { page = 1, limit = 100 } = req.body || {};
   
@@ -107,17 +120,23 @@ export default async function handler(
         set_id: setId,
         name: card.name || "Unknown",
         card_number: firstEdition.collector_number || "UNKNOWN",
-        element: card.element?.name || null,
-        card_type: card.type?.name || "Unknown",
-        class: card.class?.name || null,
-        rarity: firstEdition.rarity?.name || "UNKNOWN",
+        element: card.element || null,
+        card_type: Array.isArray(card.types) && card.types.length > 0 
+          ? card.types.join(", ") 
+          : "Unknown",
+        class: Array.isArray(card.classes) && card.classes.length > 0 
+          ? card.classes.join(", ") 
+          : null,
+        rarity: typeof firstEdition.rarity === 'number' 
+          ? mapRarityNumber(firstEdition.rarity)
+          : "UNKNOWN",
         cost: card.cost?.memory !== undefined ? card.cost.memory : null,
         power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
         life: card.stats?.HP !== undefined ? card.stats.HP : null,
-        effect_text: card.effect?.description || null,
-        flavor_text: card.flavor_text || null,
+        effect_text: card.effect || null,
+        flavor_text: card.flavor || null,
         image_url: imageUrl,
-        illustrator: firstEdition.artist || null,
+        illustrator: firstEdition.illustrator || null,
       };
     }).filter(Boolean); // Remove null entries
 
