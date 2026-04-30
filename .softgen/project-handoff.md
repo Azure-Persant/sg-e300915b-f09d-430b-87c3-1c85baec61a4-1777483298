@@ -45,7 +45,7 @@ Build a comprehensive Grand Archive TCG collection management platform similar t
 
 ### Tables
 
-#### `cards` (3,859 records)
+#### `cards` (3,861 records)
 Stores all Grand Archive TCG card data synced from the official API.
 
 ```sql
@@ -166,7 +166,7 @@ Located in: `src/pages/api/sync-cards.ts`
 - The `/cards/search` API endpoint returns multiple editions per card in the `editions` array
 - Each edition is processed as a separate database entry (same card, different sets/printings)
 - Deduplication happens within each batch based on `(set_id, card_number)` combination
-- Missing sets are now manually added if discovered (e.g., DOA First Edition, SP2)
+- Missing sets are manually added if discovered (e.g., DOA First Edition, SP2)
 
 **To trigger sync:** Navigate to `/cards` and click "Sync Card Database" button
 
@@ -245,7 +245,7 @@ src/
 - **Search:** Real-time card name search
 - **Card Display:** Image, name, rarity, cost, power/life stats
 - **Navigation:** Previous/Next, jump to page, First/Last buttons
-- **All Printings:** Captures all editions/printings of each card (e.g., 6 Aesan Protector versions)
+- **All Printings:** Captures all editions/printings available in the API (6 Aesan Protector versions, 2 Aella versions with correct CSR rarity)
 
 **Technical Notes:**
 - Supabase has a hard 1,000 row limit per request
@@ -436,6 +436,12 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 - [ ] Trading system (card wants/haves)
 - [ ] User profiles with collection showcase
 
+### Phase 5: Data Completeness
+- [ ] Manual printing entry system
+- [ ] Community missing printing reports
+- [ ] Extended art variant tracking
+- [ ] Alternative art tracking
+
 ---
 
 ## 🚀 Setup & Development
@@ -520,11 +526,19 @@ pm2 restart all      # Restart PM2 services (in dev)
 3. Check RLS policies on `profiles` table
 4. Verify email confirmation is disabled (if testing)
 
+### Missing Card Printings
+1. Check official index: https://index.gatcg.com
+2. Search by card name to see all printings
+3. Note any printings with `-ext` suffix (extended art)
+4. Note any CSR/special variants
+5. File manual entry request if critical for collection
+
 ---
 
 ## 📚 Useful References
 
 - **Grand Archive API Docs:** https://api.gatcg.com/docs
+- **Grand Archive Official Index:** https://index.gatcg.com
 - **Supabase Docs:** https://supabase.com/docs
 - **shadcn/ui Components:** https://ui.shadcn.com
 - **Next.js Page Router:** https://nextjs.org/docs/pages
@@ -536,7 +550,19 @@ pm2 restart all      # Restart PM2 services (in dev)
 
 **Project Type:** Grand Archive TCG Collection Manager  
 **Status:** Active Development  
-**Last Major Update:** 2026-04-29 - Card sync complete with all editions (3,861 cards, 38 sets)
+**Last Major Update:** 2026-04-29
+
+**Recent Changes:**
+- Card sync complete with 3,861 cards from 38 sets
+- CSR rarity mapping fixed (Aella now shows correct rarity)
+- Missing sets added (DOA First Edition, Supporter Pack 2)
+- Documented API data incompleteness limitation
+- Deduplication logic prevents duplicate key errors
+
+**Known Limitations:**
+- API doesn't return all printings (extended art, some CSR variants)
+- Manual tracking may be needed for complete collections
+- Community input valuable for discovering missing printings
 
 ---
 
