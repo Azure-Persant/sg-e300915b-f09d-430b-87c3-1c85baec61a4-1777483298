@@ -171,14 +171,13 @@ Located in: `src/pages/api/sync-cards.ts`
 **To trigger sync:** Navigate to `/cards` and click "Sync Card Database" button
 
 **Sync Stats:**
-- Total API Pages: 75
-- Cards Per Page: ~30-100 (varies)
-- Total Cards Synced: 3,861 printings
-- Unique Card Names: 2,222
-- Total Sets Synced: 38
+- Sync Method: Prefix-based (iterates through 56 set prefixes)
+- Total Cards Synced: 2,099 card printings
+- Unique Card Names: ~1,100 (estimated)
+- Total Sets Synced: 55
 - CSR Rarity Mapping: ✅ Complete
-- Missing Sets Fixed: DOA First Edition (275 cards), Supporter Pack 2 (43 cards)
-- Sync Duration: ~3-5 minutes
+- Sync Duration: ~2-3 minutes
+- Last Sync: 2026-05-09
 
 ---
 
