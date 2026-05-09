@@ -300,10 +300,10 @@ export default async function handler(
     let insertedCount = 0;
 
     if (cardsToInsert.length > 0) {
-      // Deduplicate
+      // Deduplicate - use (set_id, card_number, rarity) to allow same card with different rarities
       const uniqueCards = new Map<string, any>();
       cardsToInsert.forEach(card => {
-        const key = `${card.set_id}_${card.card_number}`;
+        const key = `${card.set_id}_${card.card_number}_${card.rarity}`;
         if (!uniqueCards.has(key)) {
           uniqueCards.set(key, card);
         }
@@ -314,7 +314,7 @@ export default async function handler(
 
       const { error: cardsError } = await supabase
         .from("cards")
-        .upsert(deduplicatedCards, { onConflict: "set_id,card_number" });
+        .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity" });
 
       if (cardsError) {
         console.error("Error inserting cards:", cardsError);
