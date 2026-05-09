@@ -37,14 +37,16 @@ export default async function handler(
     // Fetch all cards using pagination with separate_editions=true
     // This returns ALL variants including extended art (-ext) and multiple rarities per set
     while (hasMore) {
-      const url = `${API_BASE_URL}/cards/search?separate_editions=true&page=${page}&page_size=${pageSize}&sort=collector_number`;
+      const url = `${API_BASE_URL}/cards/search?separate_editions=true&page=${page}&limit=${pageSize}&sort=collector_number`;
       
       console.log(`Fetching page ${page}...`);
       
       const response = await fetch(url);
       
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+        const errorText = await response.text();
+        console.error(`API request failed with status ${response.status}:`, errorText);
+        throw new Error(`API request failed: ${response.status} - ${errorText.substring(0, 200)}`);
       }
 
       const data = await response.json();
