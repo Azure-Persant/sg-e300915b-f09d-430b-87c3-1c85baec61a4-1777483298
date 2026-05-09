@@ -172,12 +172,15 @@ Located in: `src/pages/api/sync-cards.ts`
 
 **Sync Stats:**
 - Sync Method: Prefix-based (iterates through 56 set prefixes)
-- Total Cards Synced: 2,099 card printings
-- Unique Card Names: ~1,100 (estimated)
-- Total Sets Synced: 55
-- CSR Rarity Mapping: ✅ Complete
+- Total Cards Synced: 2,099 card printings (from latest sync)
+- Total Cards in Database: 4,194 printings (includes historical syncs)
+- Unique Card Names: 2,222
+- Total Sets: 55
+- CSR Rarity Mapping: ✅ Complete (e.g., Aella from RDO 1st correctly shows "CSR")
 - Sync Duration: ~2-3 minutes
 - Last Sync: 2026-05-09
+
+**⚠️ Known API Limitation:** The sync captures all cards that the Grand Archive API exposes, but the API itself is incomplete. See "Known Issues" section for details on missing printings (extended art variants, multiple rarities per set, some promos).
 
 ---
 
@@ -381,10 +384,28 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 
 ## 🐛 Known Issues & Limitations
 
-### 1. Card Sync - API Inconsistency
-**Issue:** Some cards return all editions in the API, others return only 1  
-**Impact:** Required manual addition of missing sets (DOA First Edition, SP2)  
-**Status:** ✅ Fixed - Missing sets manually added, sync now captures all available cards
+### 1. **CRITICAL: Grand Archive API Data Incompleteness**
+**Issue:** The official Grand Archive API (`https://api.gatcg.com/cards/search`) is fundamentally incomplete compared to the official card index (https://index.gatcg.com)
+
+**Specific Limitations:**
+- **Only 1 rarity per card per set** - If a card has multiple rarities in the same set (e.g., Common + CSR in ALCSD), the API only returns one of them
+- **Extended art variants missing** - Cards with `-ext` suffix (extended art) are not returned by the search endpoint
+- **Some promotional printings missing** - Certain promo variants don't appear in search results
+
+**Real-World Examples:**
+- **Arisanna, Astral Zenith:**
+  - ✅ API returns: ALCSD Common, RDOPD Common, ALC Common  
+  - ❌ API missing: ALCSD CSR, RDOPD-ext (both exist on official index)
+  
+- **Impact:** Users tracking complete collections will have gaps. The database can only sync what the API provides.
+
+**Potential Workarounds:**
+1. **Manual entry system** - Allow users to manually add missing printings they physically own
+2. **Community reports** - Let users report missing printings for admin review
+3. **Web scraping** (not ideal - fragile and against ToS)
+4. **Wait for API updates** - Contact Grand Archive to improve API completeness
+
+**Status:** 🔴 Unresolved - This is a limitation of the upstream API, not our code
 
 ### 2. Image Loading Performance
 **Issue:** Loading 100 card images per page can be slow on poor connections  
