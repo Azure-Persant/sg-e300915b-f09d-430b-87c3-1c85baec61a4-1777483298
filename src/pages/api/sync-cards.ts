@@ -300,10 +300,11 @@ export default async function handler(
     let insertedCount = 0;
 
     if (cardsToInsert.length > 0) {
-      // Deduplicate - use (set_id, card_number, rarity) to allow same card with different rarities
+      // Deduplicate - use (set_id, card_number, rarity, image_url) to allow extended art variants
+      // Extended art cards have same set/number/rarity but different images
       const uniqueCards = new Map<string, any>();
       cardsToInsert.forEach(card => {
-        const key = `${card.set_id}_${card.card_number}_${card.rarity}`;
+        const key = `${card.set_id}_${card.card_number}_${card.rarity}_${card.image_url || 'no-image'}`;
         if (!uniqueCards.has(key)) {
           uniqueCards.set(key, card);
         }
