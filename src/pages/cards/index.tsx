@@ -61,40 +61,23 @@ export default function CardsPage() {
     try {
       toast({
         title: "Syncing card database...",
-        description: "This may take a few minutes. Please wait.",
+        description: "Fetching all cards from all sets. This may take a moment...",
       });
 
-      let currentPage = 1;
-      let hasMore = true;
-      let totalProcessed = 0;
+      const response = await fetch("/api/sync-cards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
 
-      while (hasMore) {
-        const response = await fetch("/api/sync-cards", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ page: currentPage, limit: 100 }),
-        });
+      const result = await response.json();
 
-        const result = await response.json();
-
-        if (!result.success) {
-          throw new Error(result.error || "Sync failed");
-        }
-
-        totalProcessed += result.processedInBatch || 0;
-        hasMore = result.hasMore;
-
-        toast({
-          title: `Processing page ${currentPage} of ${result.totalPages}...`,
-          description: `${totalProcessed} cards synced so far`,
-        });
-
-        currentPage++;
+      if (!result.success) {
+        throw new Error(result.error || "Sync failed");
       }
 
       toast({
         title: "Sync complete!",
-        description: `Successfully synced ${totalProcessed} cards from all sets`,
+        description: `Successfully synced ${result.processedInBatch} cards from ${result.setsProcessed} sets`,
       });
 
       // Reload cards after sync

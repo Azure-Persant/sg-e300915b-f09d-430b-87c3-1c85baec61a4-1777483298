@@ -3,6 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 
 const API_BASE_URL = "https://api.gatcg.com";
 
+// All known Grand Archive set prefixes (from https://api.gatcg.com)
+const SET_PREFIXES = [
+  "ReC-AUR", "RDOP", "RDOA", "RDOPD", "RDO+1st", "RDOEVP", "RDO",
+  "PP1", "AMB+Alter", "ReC-BRV", "PTMLGS", "PTM+1st", "PTMEVP", "PTM",
+  "DTRSD", "DTR+1st", "DTR", "SP3", "MRC+Alter", "ReC-IDY", "ReC-HVF",
+  "HVN+1st", "HVN", "P25", "ALC+Alter", "AMBDP", "AMBSD", "AMB+1st", "AMB",
+  "SP2", "ReC-SLM", "ReC-SHD", "MRC+1st", "MRC", "SLC", "ALCSD",
+  "ALC+1st", "ALC", "P24", "FTCA", "FTC", "DEMO23", "P23", "SP1",
+  "DOASD", "DOA+Alter", "PRXY", "EVP", "GSC", "KSP", "DOAp",
+  "DOA+1st", "P22", "DEMO22", "P26"
+];
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -26,13 +38,14 @@ export default async function handler(
     return rarityMap[rarityNum] || "UNKNOWN";
   };
 
-  console.log("=== SYNC STARTED ===");
-  const { page = 1, limit = 100 } = req.body || {};
+  console.log("=== SYNC STARTED (PREFIX-BASED) ===");
   
   try {
-    // Fetch ONE page of cards at a time to avoid timeouts
-    console.log(`Fetching page ${page}...`);
-    const url = `${API_BASE_URL}/cards/search?page=${page}&limit=${limit}`;
+    // Build URL with ALL set prefixes to get complete card data
+    const prefixParams = SET_PREFIXES.map(p => `prefix=${encodeURIComponent(p)}`).join("&");
+    const url = `${API_BASE_URL}/cards/search?${prefixParams}&limit=10000`;
+    
+    console.log(`Fetching all cards with ${SET_PREFIXES.length} set prefixes...`);
     
     const response = await fetch(url);
     
@@ -41,24 +54,25 @@ export default async function handler(
     }
 
     const data = await response.json();
-    console.log(`✓ Page ${page}: Received ${data.data?.length || 0} cards`);
+    console.log(`✓ Received ${data.data?.length || 0} cards from API`);
 
-    console.log(`\n[STEP 2] Processing ${data.data.length} cards from page ${page}...`);
+    console.log(`\n[STEP 2] Processing ${data.data.length} cards...`);
     
-    // Extract unique sets from this batch
+    // Extract unique sets from ALL editions
     const uniqueSets = new Map<string, any>();
     data.data.forEach((card: any) => {
-      const edition = card.editions?.[0];
-      if (edition?.set) {
-        const setCode = edition.set.id;
-        if (!uniqueSets.has(setCode)) {
-          uniqueSets.set(setCode, {
-            code: setCode,
-            name: edition.set.name,
-            release_date: edition.set.release_date || null,
-          });
+      card.editions?.forEach((edition: any) => {
+        if (edition?.set) {
+          const setCode = edition.set.id;
+          if (!uniqueSets.has(setCode)) {
+            uniqueSets.set(setCode, {
+              code: setCode,
+              name: edition.set.name,
+              release_date: edition.set.release_date || null,
+            });
+          }
         }
-      }
+      });
     });
 
     console.log(`  Found ${uniqueSets.size} unique sets in this batch`);
@@ -181,16 +195,14 @@ export default async function handler(
       }
     }
 
-    console.log(`✅ Page ${page} complete: ${insertedCount} cards inserted, ${errorCount} errors`);
+    console.log(`✅ Sync complete: ${insertedCount} cards inserted/updated, ${errorCount} errors`);
 
     return res.status(200).json({
       success: true,
-      page: data.page,
-      totalPages: data.total_pages,
       totalCards: data.total_cards,
-      hasMore: data.has_more,
       processedInBatch: insertedCount,
       errors: errorCount,
+      setsProcessed: uniqueSets.size,
     });
   } catch (error) {
     console.error("Sync error:", error);
