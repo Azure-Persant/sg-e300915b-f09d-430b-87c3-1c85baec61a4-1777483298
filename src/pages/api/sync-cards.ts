@@ -38,29 +38,45 @@ export default async function handler(
     return rarityMap[rarityNum] || "UNKNOWN";
   };
 
-  console.log("=== SYNC STARTED (PREFIX-BASED) ===");
+  console.log("=== SYNC STARTED (PREFIX-BY-PREFIX) ===");
+  console.log(`Fetching cards from ${SET_PREFIXES.length} set prefixes...`);
   
   try {
-    // Build URL with ALL set prefixes to get complete card data
-    const prefixParams = SET_PREFIXES.map(p => `prefix=${encodeURIComponent(p)}`).join("&");
-    const url = `${API_BASE_URL}/cards/search?${prefixParams}&limit=10000`;
-    
-    console.log(`Fetching all cards with ${SET_PREFIXES.length} set prefixes...`);
-    
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
+    let allCardsData: any[] = [];
+    let prefixesProcessed = 0;
+
+    // Fetch cards for each prefix individually to avoid API limits
+    for (const prefix of SET_PREFIXES) {
+      try {
+        const url = `${API_BASE_URL}/cards/search?prefix=${encodeURIComponent(prefix)}&limit=1000`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+          console.warn(`  ⚠️ Failed to fetch prefix ${prefix}: ${response.status}`);
+          continue;
+        }
+
+        const data = await response.json();
+        const cardsCount = data.data?.length || 0;
+        
+        if (cardsCount > 0) {
+          allCardsData = allCardsData.concat(data.data);
+          console.log(`  ✓ Prefix ${prefix}: ${cardsCount} cards`);
+        }
+        
+        prefixesProcessed++;
+      } catch (error) {
+        console.error(`  ❌ Error fetching prefix ${prefix}:`, error);
+      }
     }
 
-    const data = await response.json();
-    console.log(`✓ Received ${data.data?.length || 0} cards from API`);
+    console.log(`\n[STEP 1 COMPLETE] Fetched ${allCardsData.length} cards from ${prefixesProcessed} prefixes`);
 
-    console.log(`\n[STEP 2] Processing ${data.data.length} cards...`);
+    console.log(`\n[STEP 2] Processing ${allCardsData.length} cards...`);
     
     // Extract unique sets from ALL editions
     const uniqueSets = new Map<string, any>();
-    data.data.forEach((card: any) => {
+    allCardsData.forEach((card: any) => {
       card.editions?.forEach((edition: any) => {
         if (edition?.set) {
           const setCode = edition.set.id;
@@ -75,7 +91,7 @@ export default async function handler(
       });
     });
 
-    console.log(`  Found ${uniqueSets.size} unique sets in this batch`);
+    console.log(`  Found ${uniqueSets.size} unique sets`);
 
     // Step 2a: Insert sets first (upsert to avoid duplicates)
     if (uniqueSets.size > 0) {
@@ -116,7 +132,7 @@ export default async function handler(
     // Step 2c: Process cards with set_id references - handle ALL editions
     const cardsToInsert: any[] = [];
     
-    data.data.forEach((card: any) => {
+    allCardsData.forEach((card: any) => {
       // Process EACH edition as a separate database entry
       card.editions?.forEach((edition: any) => {
         const setCode = edition.set?.id;
@@ -160,7 +176,7 @@ export default async function handler(
 
     console.log(`  Prepared ${cardsToInsert.length} card printings for insertion`);
 
-    console.log(`Inserting ${cardsToInsert.length} cards...`);
+    console.log(`\n[STEP 3] Inserting ${cardsToInsert.length} cards...`);
     let insertedCount = 0;
     let errorCount = 0;
 
@@ -195,14 +211,19 @@ export default async function handler(
       }
     }
 
-    console.log(`✅ Sync complete: ${insertedCount} cards inserted/updated, ${errorCount} errors`);
+    console.log(`\n✅ SYNC COMPLETE:`);
+    console.log(`   - Prefixes processed: ${prefixesProcessed}/${SET_PREFIXES.length}`);
+    console.log(`   - Cards inserted/updated: ${insertedCount}`);
+    console.log(`   - Errors: ${errorCount}`);
+    console.log(`   - Sets processed: ${uniqueSets.size}`);
 
     return res.status(200).json({
       success: true,
-      totalCards: data.total_cards,
+      totalCards: allCardsData.length,
       processedInBatch: insertedCount,
       errors: errorCount,
       setsProcessed: uniqueSets.size,
+      prefixesProcessed,
     });
   } catch (error) {
     console.error("Sync error:", error);
