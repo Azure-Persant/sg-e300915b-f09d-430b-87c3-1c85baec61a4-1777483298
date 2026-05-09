@@ -240,55 +240,56 @@ export default async function handler(
     
     allCardsData.forEach((card: any) => {
       const editions = card.result_editions || card.editions || [];
-      const edition = editions[0];
-      if (!edition) return;
+      
+      // ✅ FIXED: Loop through ALL editions, not just the first one
+      editions.forEach((edition: any) => {
+        const setCode = edition.set?.id;
+        const setId = setCode ? setCodeToId.get(setCode) : null;
 
-      const setCode = edition.set?.id;
-      const setId = setCode ? setCodeToId.get(setCode) : null;
+        if (!setId) {
+          console.warn(`  ⚠️ No set_id found for: ${card.name} (${setCode})`);
+          return;
+        }
 
-      if (!setId) {
-        console.warn(`  ⚠️ No set_id found for: ${card.name} (${setCode})`);
-        return;
-      }
+        // If incremental sync, only process cards from new sets
+        if (shouldDoIncrementalSync && !newSetCodes.includes(setCode)) {
+          return;
+        }
 
-      // If incremental sync, only process cards from new sets
-      if (shouldDoIncrementalSync && !newSetCodes.includes(setCode)) {
-        return;
-      }
+        const imageUrl = edition.image ? `https://api.gatcg.com${edition.image}` : null;
+        const effect = edition.effect_raw || edition.effect || card.effect || null;
 
-      const imageUrl = edition.image ? `https://api.gatcg.com${edition.image}` : null;
-      const effect = edition.effect_raw || edition.effect || card.effect || null;
+        const types = card.types || [];
+        const subtypes = card.subtypes || [];
+        let typeString = '';
+        if (types.length > 0) typeString += types.join(' ').toUpperCase();
+        if (subtypes.length > 0) {
+          if (typeString) typeString += ' — ';
+          typeString += subtypes.join(' ').toUpperCase();
+        }
 
-      const types = card.types || [];
-      const subtypes = card.subtypes || [];
-      let typeString = '';
-      if (types.length > 0) typeString += types.join(' ').toUpperCase();
-      if (subtypes.length > 0) {
-        if (typeString) typeString += ' — ';
-        typeString += subtypes.join(' ').toUpperCase();
-      }
-
-      cardsToInsert.push({
-        set_id: setId,
-        name: card.name || "Unknown",
-        card_number: edition.collector_number || "UNKNOWN",
-        element: card.element || null,
-        card_type: typeString || "Unknown",
-        class: Array.isArray(card.classes) && card.classes.length > 0 
-          ? card.classes.join(", ") 
-          : null,
-        rarity: typeof edition.rarity === 'number' 
-          ? mapRarityNumber(edition.rarity)
-          : "UNKNOWN",
-        cost: card.cost_reserve !== null && card.cost_reserve !== undefined 
-          ? card.cost_reserve 
-          : (card.cost_memory || 0),
-        power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
-        life: card.stats?.HP !== undefined ? card.stats.HP : null,
-        effect_text: effect,
-        flavor_text: card.flavor || null,
-        image_url: imageUrl,
-        illustrator: edition.illustrator || null,
+        cardsToInsert.push({
+          set_id: setId,
+          name: card.name || "Unknown",
+          card_number: edition.collector_number || "UNKNOWN",
+          element: card.element || null,
+          card_type: typeString || "Unknown",
+          class: Array.isArray(card.classes) && card.classes.length > 0 
+            ? card.classes.join(", ") 
+            : null,
+          rarity: typeof edition.rarity === 'number' 
+            ? mapRarityNumber(edition.rarity)
+            : "UNKNOWN",
+          cost: card.cost_reserve !== null && card.cost_reserve !== undefined 
+            ? card.cost_reserve 
+            : (card.cost_memory || 0),
+          power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
+          life: card.stats?.HP !== undefined ? card.stats.HP : null,
+          effect_text: effect,
+          flavor_text: card.flavor || null,
+          image_url: imageUrl,
+          illustrator: edition.illustrator || null,
+        });
       });
     });
 
