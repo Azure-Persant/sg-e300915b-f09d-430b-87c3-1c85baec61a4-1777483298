@@ -3,18 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 
 const API_BASE_URL = "https://api.gatcg.com";
 
-// All known Grand Archive set prefixes (from https://api.gatcg.com)
-const SET_PREFIXES = [
-  "ReC-AUR", "RDOP", "RDOA", "RDOPD", "RDO+1st", "RDOEVP", "RDO",
-  "PP1", "AMB+Alter", "ReC-BRV", "PTMLGS", "PTM+1st", "PTMEVP", "PTM",
-  "DTRSD", "DTR+1st", "DTR", "SP3", "MRC+Alter", "ReC-IDY", "ReC-HVF",
-  "HVN+1st", "HVN", "P25", "ALC+Alter", "AMBDP", "AMBSD", "AMB+1st", "AMB",
-  "SP2", "ReC-SLM", "ReC-SHD", "MRC+1st", "MRC", "SLC", "ALCSD",
-  "ALC+1st", "ALC", "P24", "FTCA", "FTC", "DEMO23", "P23", "SP1",
-  "DOASD", "DOA+Alter", "PRXY", "EVP", "GSC", "KSP", "DOAp",
-  "DOA+1st", "P22", "DEMO22", "P26"
-];
-
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -23,7 +11,7 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Helper function to map rarity numbers to names
+  // Helper function to map rarity numbers to names (from Python script)
   const mapRarityNumber = (rarityNum: number): string => {
     const rarityMap: Record<number, string> = {
       1: "C",      // Common
@@ -38,46 +26,53 @@ export default async function handler(
     return rarityMap[rarityNum] || "UNKNOWN";
   };
 
-  console.log("=== SYNC STARTED (PREFIX-BY-PREFIX) ===");
-  console.log(`Fetching cards from ${SET_PREFIXES.length} set prefixes...`);
+  console.log("=== SYNC STARTED (SEPARATE EDITIONS MODE) ===");
   
   try {
     let allCardsData: any[] = [];
-    let prefixesProcessed = 0;
+    let hasMore = true;
+    let page = 1;
+    const pageSize = 100;
 
-    // Fetch cards for each prefix individually to avoid API limits
-    for (const prefix of SET_PREFIXES) {
-      try {
-        const url = `${API_BASE_URL}/cards/search?prefix=${encodeURIComponent(prefix)}&limit=1000`;
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-          console.warn(`  ⚠️ Failed to fetch prefix ${prefix}: ${response.status}`);
-          continue;
-        }
+    // Fetch all cards using pagination with separate_editions=true
+    // This returns ALL variants including extended art (-ext) and multiple rarities per set
+    while (hasMore) {
+      const url = `${API_BASE_URL}/cards/search?separate_editions=true&page=${page}&page_size=${pageSize}&sort=collector_number`;
+      
+      console.log(`Fetching page ${page}...`);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
 
-        const data = await response.json();
-        const cardsCount = data.data?.length || 0;
-        
-        if (cardsCount > 0) {
-          allCardsData = allCardsData.concat(data.data);
-          console.log(`  ✓ Prefix ${prefix}: ${cardsCount} cards`);
-        }
-        
-        prefixesProcessed++;
-      } catch (error) {
-        console.error(`  ❌ Error fetching prefix ${prefix}:`, error);
+      const data = await response.json();
+      const cards = data.data || [];
+      
+      allCardsData = allCardsData.concat(cards);
+      console.log(`  ✓ Page ${page}: ${cards.length} cards`);
+      
+      hasMore = data.has_more || false;
+      page++;
+      
+      // Small delay to respect API rate limits
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
-    console.log(`\n[STEP 1 COMPLETE] Fetched ${allCardsData.length} cards from ${prefixesProcessed} prefixes`);
+    console.log(`\n[STEP 1 COMPLETE] Fetched ${allCardsData.length} card editions from ${page - 1} pages`);
 
-    console.log(`\n[STEP 2] Processing ${allCardsData.length} cards...`);
+    console.log(`\n[STEP 2] Processing ${allCardsData.length} card editions...`);
     
-    // Extract unique sets from ALL editions
+    // Extract unique sets from ALL editions (using result_editions or editions)
     const uniqueSets = new Map<string, any>();
     allCardsData.forEach((card: any) => {
-      card.editions?.forEach((edition: any) => {
+      // Get editions array (API uses result_editions when separate_editions=true)
+      const editions = card.result_editions || card.editions || [];
+      
+      editions.forEach((edition: any) => {
         if (edition?.set) {
           const setCode = edition.set.id;
           if (!uniqueSets.has(setCode)) {
@@ -129,48 +124,67 @@ export default async function handler(
 
     console.log(`  Mapped ${setCodeToId.size} set codes to IDs`);
 
-    // Step 2c: Process cards with set_id references - handle ALL editions
+    // Step 2c: Process cards - when separate_editions=true, each card IS a specific edition
     const cardsToInsert: any[] = [];
     
     allCardsData.forEach((card: any) => {
-      // Process EACH edition as a separate database entry
-      card.editions?.forEach((edition: any) => {
-        const setCode = edition.set?.id;
-        const setId = setCode ? setCodeToId.get(setCode) : null;
+      // When separate_editions=true, result_editions contains THIS card's edition info
+      const editions = card.result_editions || card.editions || [];
+      
+      // Usually there's just 1 edition per card when separate_editions=true
+      const edition = editions[0];
+      if (!edition) return;
 
-        if (!setId) {
-          console.warn(`  ⚠️ No set_id found for card: ${card.name} (set code: ${setCode})`);
-          return;
-        }
+      const setCode = edition.set?.id;
+      const setId = setCode ? setCodeToId.get(setCode) : null;
 
-        // Build full image URL
-        const imageUrl = edition.image
-          ? `https://api.gatcg.com${edition.image}`
-          : null;
+      if (!setId) {
+        console.warn(`  ⚠️ No set_id found for card: ${card.name} (set code: ${setCode})`);
+        return;
+      }
 
-        // Create a card entry for this specific edition/printing
-        cardsToInsert.push({
-          set_id: setId,
-          name: card.name || "Unknown",
-          card_number: edition.collector_number || "UNKNOWN",
-          element: card.element || null,
-          card_type: Array.isArray(card.types) && card.types.length > 0 
-            ? card.types.join(", ") 
-            : "Unknown",
-          class: Array.isArray(card.classes) && card.classes.length > 0 
-            ? card.classes.join(", ") 
-            : null,
-          rarity: typeof edition.rarity === 'number' 
-            ? mapRarityNumber(edition.rarity)
-            : "UNKNOWN",
-          cost: card.cost?.memory !== undefined ? card.cost.memory : null,
-          power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
-          life: card.stats?.HP !== undefined ? card.stats.HP : null,
-          effect_text: card.effect || null,
-          flavor_text: card.flavor || null,
-          image_url: imageUrl,
-          illustrator: edition.illustrator || null,
-        });
+      // Build full image URL
+      const imageUrl = edition.image
+        ? `https://api.gatcg.com${edition.image}`
+        : null;
+
+      // Extract effect from edition or card level
+      const effect = edition.effect_raw || edition.effect || card.effect || null;
+
+      // Build Type string: "TYPES — SUBTYPES" (matching Python script format)
+      const types = card.types || [];
+      const subtypes = card.subtypes || [];
+      let typeString = '';
+      if (types.length > 0) {
+        typeString += types.join(' ').toUpperCase();
+      }
+      if (subtypes.length > 0) {
+        if (typeString) typeString += ' — ';
+        typeString += subtypes.join(' ').toUpperCase();
+      }
+
+      // Create a card entry for this specific edition/printing
+      cardsToInsert.push({
+        set_id: setId,
+        name: card.name || "Unknown",
+        card_number: edition.collector_number || "UNKNOWN",
+        element: card.element || null,
+        card_type: typeString || "Unknown",
+        class: Array.isArray(card.classes) && card.classes.length > 0 
+          ? card.classes.join(", ") 
+          : null,
+        rarity: typeof edition.rarity === 'number' 
+          ? mapRarityNumber(edition.rarity)
+          : "UNKNOWN",
+        cost: card.cost_reserve !== null && card.cost_reserve !== undefined 
+          ? card.cost_reserve 
+          : (card.cost_memory || 0),
+        power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
+        life: card.stats?.HP !== undefined ? card.stats.HP : null,
+        effect_text: effect,
+        flavor_text: card.flavor || null,
+        image_url: imageUrl,
+        illustrator: edition.illustrator || null,
       });
     });
 
@@ -212,7 +226,8 @@ export default async function handler(
     }
 
     console.log(`\n✅ SYNC COMPLETE:`);
-    console.log(`   - Prefixes processed: ${prefixesProcessed}/${SET_PREFIXES.length}`);
+    console.log(`   - Pages fetched: ${page - 1}`);
+    console.log(`   - Total editions fetched: ${allCardsData.length}`);
     console.log(`   - Cards inserted/updated: ${insertedCount}`);
     console.log(`   - Errors: ${errorCount}`);
     console.log(`   - Sets processed: ${uniqueSets.size}`);
@@ -223,7 +238,7 @@ export default async function handler(
       processedInBatch: insertedCount,
       errors: errorCount,
       setsProcessed: uniqueSets.size,
-      prefixesProcessed,
+      pagesProcessed: page - 1,
     });
   } catch (error) {
     console.error("Sync error:", error);
