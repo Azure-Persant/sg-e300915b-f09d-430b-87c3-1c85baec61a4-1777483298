@@ -246,6 +246,42 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_history: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          pages_fetched: number | null
+          started_at: string | null
+          status: string | null
+          total_cards_processed: number | null
+          total_sets_processed: number | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          pages_fetched?: number | null
+          started_at?: string | null
+          status?: string | null
+          total_cards_processed?: number | null
+          total_sets_processed?: number | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          pages_fetched?: number | null
+          started_at?: string | null
+          status?: string | null
+          total_cards_processed?: number | null
+          total_sets_processed?: number | null
+        }
+        Relationships: []
+      }
       user_collections: {
         Row: {
           card_id: string

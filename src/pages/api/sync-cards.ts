@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabase } from "@/integrations/supabase/client";
+import { updateProgress, resetProgress } from "./sync-progress";
 
 const API_BASE_URL = "https://api.gatcg.com";
 
@@ -11,7 +12,10 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Helper function to map rarity numbers to names (from Python script)
+  // Check if force full sync is requested
+  const forceFullSync = req.body?.forceFullSync === true;
+
+  // Helper function to map rarity numbers to names
   const mapRarityNumber = (rarityNum: number): string => {
     const rarityMap: Record<number, string> = {
       1: "C",      // Common
@@ -28,50 +32,113 @@ export default async function handler(
 
   console.log("=== SYNC STARTED (SEPARATE EDITIONS MODE) ===");
   
+  // Create sync history record
+  const { data: syncRecord, error: syncCreateError } = await supabase
+    .from("sync_history")
+    .insert({
+      started_at: new Date().toISOString(),
+      status: "running",
+    })
+    .select()
+    .single();
+
+  if (syncCreateError) {
+    console.error("Failed to create sync record:", syncCreateError);
+  }
+
+  const syncId = syncRecord?.id;
+
+  // Reset progress tracking
+  resetProgress();
+  updateProgress({ isRunning: true, message: "Starting sync..." });
+  
   try {
+    // Check if we should do incremental sync
+    let shouldDoIncrementalSync = false;
+    let existingSetCodes: string[] = [];
+
+    if (!forceFullSync) {
+      const { count: cardCount } = await supabase
+        .from("cards")
+        .select("*", { count: "exact", head: true });
+
+      // If we have cards already, do incremental sync
+      if (cardCount && cardCount > 100) {
+        shouldDoIncrementalSync = true;
+        
+        const { data: existingSets } = await supabase
+          .from("sets")
+          .select("code");
+        
+        existingSetCodes = existingSets?.map(s => s.code) || [];
+        console.log(`Incremental sync mode: ${existingSetCodes.length} sets already in database`);
+        updateProgress({ message: `Incremental sync: checking for new sets (${existingSetCodes.length} existing)` });
+      }
+    }
+
     let allCardsData: any[] = [];
     let hasMore = true;
     let page = 1;
     const pageSize = 100;
 
+    // Estimate total pages (API typically has ~40-60 pages)
+    updateProgress({ totalPages: 60, message: "Fetching cards from API..." });
+
     // Fetch all cards using pagination with separate_editions=true
-    // This returns ALL variants including extended art (-ext) and multiple rarities per set
     while (hasMore) {
       const url = `${API_BASE_URL}/cards/search?separate_editions=true&page=${page}&limit=${pageSize}&sort=collector_number`;
       
       console.log(`Fetching page ${page}...`);
+      updateProgress({ 
+        currentPage: page, 
+        message: `Fetching page ${page}...` 
+      });
       
       const response = await fetch(url);
       
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`API request failed with status ${response.status}:`, errorText);
-        throw new Error(`API request failed: ${response.status} - ${errorText.substring(0, 200)}`);
+        throw new Error(`API request failed: ${response.status}`);
       }
 
       const data = await response.json();
       const cards = data.data || [];
       
       allCardsData = allCardsData.concat(cards);
-      console.log(`  ✓ Page ${page}: ${cards.length} cards`);
+      console.log(`  ✓ Page ${page}: ${cards.length} cards (total: ${allCardsData.length})`);
+      updateProgress({ 
+        processedCards: allCardsData.length,
+        message: `Fetched ${allCardsData.length} cards from ${page} pages` 
+      });
       
       hasMore = data.has_more || false;
+      
+      // Update total pages estimate based on actual pagination
+      if (hasMore && page === 1) {
+        const estimatedTotal = Math.ceil((data.total_cards || 5000) / pageSize);
+        updateProgress({ totalPages: estimatedTotal });
+      }
+      
       page++;
       
       // Small delay to respect API rate limits
       if (hasMore) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
 
     console.log(`\n[STEP 1 COMPLETE] Fetched ${allCardsData.length} card editions from ${page - 1} pages`);
+    updateProgress({ 
+      message: `Processing ${allCardsData.length} cards...`,
+      totalPages: page - 1 
+    });
 
     console.log(`\n[STEP 2] Processing ${allCardsData.length} card editions...`);
     
-    // Extract unique sets from ALL editions (using result_editions or editions)
+    // Extract unique sets
     const uniqueSets = new Map<string, any>();
     allCardsData.forEach((card: any) => {
-      // Get editions array (API uses result_editions when separate_editions=true)
       const editions = card.result_editions || card.editions || [];
       
       editions.forEach((edition: any) => {
@@ -88,12 +155,55 @@ export default async function handler(
       });
     });
 
-    console.log(`  Found ${uniqueSets.size} unique sets`);
+    console.log(`  Found ${uniqueSets.size} unique sets in API`);
 
-    // Step 2a: Insert sets first (upsert to avoid duplicates)
+    // Check for new sets (if incremental sync)
+    let newSetCodes: string[] = [];
+    if (shouldDoIncrementalSync) {
+      const allSetCodes = Array.from(uniqueSets.keys());
+      newSetCodes = allSetCodes.filter(code => !existingSetCodes.includes(code));
+      
+      if (newSetCodes.length === 0) {
+        console.log("  ✓ No new sets found - database is up to date!");
+        updateProgress({ 
+          isRunning: false,
+          message: "Database is up to date - no new sets to sync" 
+        });
+
+        // Update sync history
+        if (syncId) {
+          await supabase
+            .from("sync_history")
+            .update({
+              completed_at: new Date().toISOString(),
+              status: "completed",
+              total_cards_processed: 0,
+              total_sets_processed: 0,
+              pages_fetched: page - 1,
+            })
+            .eq("id", syncId);
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Database is up to date",
+          totalCards: allCardsData.length,
+          processedInBatch: 0,
+          newSets: 0,
+          setsProcessed: 0,
+          pagesProcessed: page - 1,
+        });
+      }
+
+      console.log(`  Found ${newSetCodes.length} NEW sets to sync:`, newSetCodes);
+      updateProgress({ message: `Found ${newSetCodes.length} new sets to sync` });
+    }
+
+    // Insert/update sets
     if (uniqueSets.size > 0) {
       const setsArray = Array.from(uniqueSets.values());
       console.log(`  Upserting ${setsArray.length} sets...`);
+      updateProgress({ message: `Upserting ${setsArray.length} sets...` });
       
       const { data: insertedSets, error: setsError } = await supabase
         .from("sets")
@@ -108,17 +218,15 @@ export default async function handler(
       console.log(`  ✓ Upserted ${insertedSets?.length || 0} sets`);
     }
 
-    // Step 2b: Fetch set IDs for card insertion
+    // Fetch set IDs
     const { data: allSets, error: fetchSetsError } = await supabase
       .from("sets")
       .select("id, code");
 
     if (fetchSetsError) {
-      console.error("  ❌ Error fetching sets:", fetchSetsError);
       throw new Error(`Failed to fetch sets: ${fetchSetsError.message}`);
     }
 
-    // Create a map of set code to set ID
     const setCodeToId = new Map<string, string>();
     allSets?.forEach(set => {
       setCodeToId.set(set.code, set.id);
@@ -126,14 +234,12 @@ export default async function handler(
 
     console.log(`  Mapped ${setCodeToId.size} set codes to IDs`);
 
-    // Step 2c: Process cards - when separate_editions=true, each card IS a specific edition
+    // Process cards
+    updateProgress({ message: "Processing card data..." });
     const cardsToInsert: any[] = [];
     
     allCardsData.forEach((card: any) => {
-      // When separate_editions=true, result_editions contains THIS card's edition info
       const editions = card.result_editions || card.editions || [];
-      
-      // Usually there's just 1 edition per card when separate_editions=true
       const edition = editions[0];
       if (!edition) return;
 
@@ -141,31 +247,27 @@ export default async function handler(
       const setId = setCode ? setCodeToId.get(setCode) : null;
 
       if (!setId) {
-        console.warn(`  ⚠️ No set_id found for card: ${card.name} (set code: ${setCode})`);
+        console.warn(`  ⚠️ No set_id found for: ${card.name} (${setCode})`);
         return;
       }
 
-      // Build full image URL
-      const imageUrl = edition.image
-        ? `https://api.gatcg.com${edition.image}`
-        : null;
+      // If incremental sync, only process cards from new sets
+      if (shouldDoIncrementalSync && !newSetCodes.includes(setCode)) {
+        return;
+      }
 
-      // Extract effect from edition or card level
+      const imageUrl = edition.image ? `https://api.gatcg.com${edition.image}` : null;
       const effect = edition.effect_raw || edition.effect || card.effect || null;
 
-      // Build Type string: "TYPES — SUBTYPES" (matching Python script format)
       const types = card.types || [];
       const subtypes = card.subtypes || [];
       let typeString = '';
-      if (types.length > 0) {
-        typeString += types.join(' ').toUpperCase();
-      }
+      if (types.length > 0) typeString += types.join(' ').toUpperCase();
       if (subtypes.length > 0) {
         if (typeString) typeString += ' — ';
         typeString += subtypes.join(' ').toUpperCase();
       }
 
-      // Create a card entry for this specific edition/printing
       cardsToInsert.push({
         set_id: setId,
         name: card.name || "Unknown",
@@ -190,14 +292,13 @@ export default async function handler(
       });
     });
 
-    console.log(`  Prepared ${cardsToInsert.length} card printings for insertion`);
+    console.log(`  Prepared ${cardsToInsert.length} card printings`);
+    updateProgress({ message: `Inserting ${cardsToInsert.length} cards into database...` });
 
-    console.log(`\n[STEP 3] Inserting ${cardsToInsert.length} cards...`);
     let insertedCount = 0;
-    let errorCount = 0;
 
     if (cardsToInsert.length > 0) {
-      // Deduplicate based on set_id + card_number to avoid "cannot affect row a second time" error
+      // Deduplicate
       const uniqueCards = new Map<string, any>();
       cardsToInsert.forEach(card => {
         const key = `${card.set_id}_${card.card_number}`;
@@ -207,7 +308,7 @@ export default async function handler(
       });
       
       const deduplicatedCards = Array.from(uniqueCards.values());
-      console.log(`  Deduplicated ${cardsToInsert.length} → ${deduplicatedCards.length} cards`);
+      console.log(`  Deduplicated ${cardsToInsert.length} → ${deduplicatedCards.length}`);
 
       const { error: cardsError } = await supabase
         .from("cards")
@@ -215,35 +316,66 @@ export default async function handler(
 
       if (cardsError) {
         console.error("Error inserting cards:", cardsError);
-        console.error("Error details:", {
-          message: cardsError.message,
-          code: cardsError.code,
-          details: cardsError.details,
-          hint: cardsError.hint,
-        });
-        errorCount = deduplicatedCards.length;
-      } else {
-        insertedCount = deduplicatedCards.length;
+        throw cardsError;
       }
+
+      insertedCount = deduplicatedCards.length;
     }
 
     console.log(`\n✅ SYNC COMPLETE:`);
-    console.log(`   - Pages fetched: ${page - 1}`);
-    console.log(`   - Total editions fetched: ${allCardsData.length}`);
-    console.log(`   - Cards inserted/updated: ${insertedCount}`);
-    console.log(`   - Errors: ${errorCount}`);
-    console.log(`   - Sets processed: ${uniqueSets.size}`);
+    console.log(`   - Pages: ${page - 1}`);
+    console.log(`   - Cards synced: ${insertedCount}`);
+    console.log(`   - Sets: ${shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size}`);
+
+    updateProgress({ 
+      isRunning: false,
+      message: `Sync complete! Processed ${insertedCount} cards from ${shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size} sets`
+    });
+
+    // Update sync history
+    if (syncId) {
+      await supabase
+        .from("sync_history")
+        .update({
+          completed_at: new Date().toISOString(),
+          status: "completed",
+          total_cards_processed: insertedCount,
+          total_sets_processed: shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size,
+          pages_fetched: page - 1,
+        })
+        .eq("id", syncId);
+    }
 
     return res.status(200).json({
       success: true,
       totalCards: allCardsData.length,
       processedInBatch: insertedCount,
-      errors: errorCount,
+      newSets: shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size,
       setsProcessed: uniqueSets.size,
       pagesProcessed: page - 1,
+      incrementalSync: shouldDoIncrementalSync,
     });
   } catch (error) {
     console.error("Sync error:", error);
+    
+    updateProgress({ 
+      isRunning: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      message: "Sync failed"
+    });
+
+    // Update sync history with error
+    if (syncId) {
+      await supabase
+        .from("sync_history")
+        .update({
+          completed_at: new Date().toISOString(),
+          status: "failed",
+          error_message: error instanceof Error ? error.message : "Unknown error",
+        })
+        .eq("id", syncId);
+    }
+
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
