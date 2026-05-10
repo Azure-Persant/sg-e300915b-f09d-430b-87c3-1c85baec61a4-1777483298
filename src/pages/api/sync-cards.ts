@@ -315,7 +315,7 @@ export default async function handler(
 
       const { error: cardsError } = await supabase
         .from("cards")
-        .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity" });
+        .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity,image_url" });
 
       if (cardsError) {
         console.error("Error inserting cards:", cardsError);
