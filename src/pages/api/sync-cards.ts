@@ -242,17 +242,6 @@ export default async function handler(
       // Get all editions for this card (result_editions and editions are the same)
       const editions = card.result_editions || card.editions || [];
       
-      // DEBUG: Log Arisanna cards
-      const isArisanna = card.name && card.name.includes("Arisanna") && card.name.includes("Astral");
-      if (isArisanna) {
-        console.log(`\n🔍 DEBUGGING ARISANNA:`);
-        console.log(`  Card name: ${card.name}`);
-        console.log(`  Total editions: ${editions.length}`);
-        editions.forEach((ed: any, idx: number) => {
-          console.log(`  Edition ${idx + 1}: Set=${ed.set?.id}, Num=${ed.collector_number}, Rarity=${ed.rarity}, Image=${ed.image?.substring(ed.image.lastIndexOf('/') + 1)}`);
-        });
-      }
-      
       // Loop through EACH edition and create a separate database entry
       editions.forEach((edition: any) => {
         const setCode = edition.set?.id;
@@ -280,7 +269,7 @@ export default async function handler(
           typeString += subtypes.join(' ').toUpperCase();
         }
 
-        const cardToInsert = {
+        cardsToInsert.push({
           set_id: setId,
           name: card.name || "Unknown",
           card_number: edition.collector_number || "UNKNOWN",
@@ -301,14 +290,7 @@ export default async function handler(
           flavor_text: edition.flavor || card.flavor || null,
           image_url: imageUrl,
           illustrator: edition.illustrator || null,
-        };
-
-        // DEBUG: Log what we're adding for Arisanna
-        if (isArisanna) {
-          console.log(`  → Adding to cardsToInsert: Set=${setCode}, Num=${cardToInsert.card_number}, Rarity=${cardToInsert.rarity}, Image=${imageUrl?.substring(imageUrl.lastIndexOf('/') + 1)}`);
-        }
-
-        cardsToInsert.push(cardToInsert);
+        });
       });
     });
 
@@ -329,16 +311,6 @@ export default async function handler(
       });
       
       const deduplicatedCards = Array.from(uniqueCards.values());
-      console.log(`  Deduplicated ${cardsToInsert.length} → ${deduplicatedCards.length}`);
-
-      // DEBUG: Show Arisanna cards after deduplication
-      const arisannaAfterDedup = deduplicatedCards.filter(c => 
-        c.name && c.name.includes("Arisanna") && c.name.includes("Astral")
-      );
-      console.log(`\n🔍 ARISANNA AFTER DEDUPLICATION: ${arisannaAfterDedup.length} cards`);
-      arisannaAfterDedup.forEach(card => {
-        console.log(`  - Set=${card.set_id.substring(0, 8)}, Num=${card.card_number}, Rarity=${card.rarity}, Image=${card.image_url?.substring(card.image_url.lastIndexOf('/') + 1)}`);
-      });
 
       const { error: cardsError } = await supabase
         .from("cards")

@@ -147,40 +147,58 @@ UNIQUE CONSTRAINT: (deck_id, card_id, is_sideboard)
 ### Grand Archive TCG API
 - **Base URL:** `https://api.gatcg.com`
 - **Docs:** https://api.gatcg.com/docs
-- **Used Endpoint:** `/cards/search?page={page}&limit={limit}`
+- **Used Endpoint:** `/cards/search?separate_editions=true&page={page}&limit={limit}`
 
 ### Data Sync Process
 Located in: `src/pages/api/sync-cards.ts`
 
 **How it works:**
-1. Fetches cards from official API in batches of 100 per page (75 total pages)
-2. Extracts unique sets from card data
-3. Upserts sets first (prevents FK constraint errors)
-4. Maps set codes to set IDs
-5. Processes ALL editions from each card's `editions` array
-6. Deduplicates cards within each batch to prevent "cannot affect row a second time" errors
-7. Upserts cards with proper set_id references
-8. Progress tracked via frontend toasts
+1. Fetches cards from official API with `separate_editions=true` parameter
+2. Paginates through all pages (100 cards per page, ~45 pages total)
+3. Processes ALL editions from each card's `editions` array (not just the first one)
+4. Extracts unique sets from edition data
+5. Upserts sets first (prevents FK constraint errors)
+6. Maps set codes to set IDs
+7. Creates database entry for EACH edition (same card name can have 5+ different printings)
+8. Deduplicates using `(set_id, card_number, rarity, image_url)` to preserve extended art variants
+9. Upserts cards with proper set_id references
+10. Real-time progress tracking via `/api/sync-progress` endpoint
+
+**Key Technical Details:**
+- **Deduplication Key:** `${set_id}_${card_number}_${rarity}_${image_url}` 
+  - Includes image_url to preserve extended art variants (e.g., RDOPD vs RDOPD-ext)
+  - Includes rarity to preserve multiple rarities per set (e.g., ALCSD Common vs ALCSD CSR)
+- **Database Constraint:** `UNIQUE (set_id, card_number, rarity, image_url)`
+- **Incremental Sync:** Only fetches new sets if database already populated (saves time)
+- **Progress Tracking:** Real-time updates via polling (1-second interval)
+- **Error Handling:** Comprehensive error logging with sync history tracking
 
 **Important Notes:**
-- The `/cards/search` API endpoint returns multiple editions per card in the `editions` array
-- Each edition is processed as a separate database entry (same card, different sets/printings)
-- Deduplication happens within each batch based on `(set_id, card_number)` combination
-- Missing sets are manually added if discovered (e.g., DOA First Edition, SP2)
+- The `/cards/search?separate_editions=true` API returns each card with ALL its editions in the `editions` array
+- Extended art variants have same set/number/rarity but different image URLs
+- CSR variants have different rarity values (7 = CSR) in the same set
+- Database unique constraint matches deduplication key to prevent overwrites
 
-**To trigger sync:** Navigate to `/cards` and click "Sync Card Database" button
+**To trigger sync:** 
+- Navigate to `/cards` page
+- Click "Update Database" (incremental sync - only new sets)
+- Click "Full Re-sync" (complete database rebuild - use when needed)
 
 **Sync Stats:**
-- Sync Method: Prefix-based (iterates through 56 set prefixes)
-- Total Cards Synced: 2,099 card printings (from latest sync)
-- Total Cards in Database: 4,194 printings (includes historical syncs)
-- Unique Card Names: 2,222
+- Total Cards Synced: 4,395 card printings (as of 2026-05-10)
 - Total Sets: 55
-- CSR Rarity Mapping: ✅ Complete (e.g., Aella from RDO 1st correctly shows "CSR")
-- Sync Duration: ~2-3 minutes
-- Last Sync: 2026-05-09
+- Sync Duration: ~3-5 minutes (full sync), 10-30 seconds (incremental if no new sets)
+- Last Major Fix: 2026-05-10 - Added image_url to deduplication key to capture extended art variants
 
-**⚠️ Known API Limitation:** The sync captures all cards that the Grand Archive API exposes, but the API itself is incomplete. See "Known Issues" section for details on missing printings (extended art variants, multiple rarities per set, some promos).
+**✅ Confirmed Working Examples:**
+- **Arisanna, Astral Zenith:** All 5 printings captured correctly:
+  - ALC Common
+  - ALCSD Common
+  - ALCSD CSR (rarity-based differentiation)
+  - RDOPD Common
+  - RDOPD-ext Common (image-based differentiation)
+
+**⚠️ Known API Limitation:** While our sync now captures all variants the API returns, the Grand Archive API itself may not expose 100% of printings visible on the official index website. The sync is working correctly - any missing cards are due to upstream API incompleteness.
 
 ---
 
@@ -239,24 +257,37 @@ src/
 
 ### 1. Card Database & Browsing (`/cards`)
 **Status:** ✅ Complete  
-**Files:** `src/pages/cards/index.tsx`, `src/services/cardService.ts`
+**Files:** `src/pages/cards/index.tsx`, `src/services/cardService.ts`, `src/pages/api/sync-cards.ts`
 
-- **Card Sync:** One-click sync from Grand Archive API
+**Features:**
+- **Card Sync:** One-click sync from Grand Archive API with `separate_editions=true`
+- **Real-time Progress:** Live progress bar with page count and card count updates
+- **Incremental Sync:** Only fetches new sets when database already populated (fast updates)
+- **Full Re-sync:** Option to rebuild entire database when needed
+- **All Printings:** Captures ALL editions returned by API including:
+  - Extended art variants (same set/number/rarity, different images)
+  - Multiple rarities per set (e.g., ALCSD Common + ALCSD CSR)
+  - All promotional printings available in the API
 - **Batched Fetching:** Overcomes Supabase's 1,000 row limit by fetching in batches
 - **Pagination:** 100 cards per page with page number input
 - **Search:** Real-time card name search
 - **Card Display:** Image, name, rarity, cost, power/life stats
 - **Navigation:** Previous/Next, jump to page, First/Last buttons
-- **All Printings:** Captures all editions/printings available in the API (6 Aesan Protector versions, 2 Aella versions with correct CSR rarity)
+- **Database Status:** Shows total cards, sets, and last sync date
 
-**Technical Notes:**
-- Supabase has a hard 1,000 row limit per request
-- Implemented batched fetching in `cardService.getCards()`:
-  ```typescript
-  while (hasMore) {
-    query.range(from, from + 999);
-  }
-  ```
+**Technical Achievements:**
+- ✅ Correct deduplication logic: `(set_id, card_number, rarity, image_url)`
+- ✅ Extended art variant preservation (RDOPD vs RDOPD-ext)
+- ✅ Multiple rarity handling (ALCSD Common + CSR on same card number)
+- ✅ Real-time sync progress tracking
+- ✅ Sync history tracking in database
+- ✅ Error handling and recovery
+
+**Verified Working:**
+- All 5 Arisanna, Astral Zenith printings sync correctly
+- CSR rarity mapping (value 7 → "CSR")
+- Extended art differentiation via image URLs
+- 4,395 total card printings from 55 sets
 
 ### 2. Authentication System
 **Status:** ✅ Complete  
@@ -384,30 +415,7 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 
 ## 🐛 Known Issues & Limitations
 
-### 1. **CRITICAL: Grand Archive API Data Incompleteness**
-**Issue:** The official Grand Archive API (`https://api.gatcg.com/cards/search`) is fundamentally incomplete compared to the official card index (https://index.gatcg.com)
-
-**Specific Limitations:**
-- **Only 1 rarity per card per set** - If a card has multiple rarities in the same set (e.g., Common + CSR in ALCSD), the API only returns one of them
-- **Extended art variants missing** - Cards with `-ext` suffix (extended art) are not returned by the search endpoint
-- **Some promotional printings missing** - Certain promo variants don't appear in search results
-
-**Real-World Examples:**
-- **Arisanna, Astral Zenith:**
-  - ✅ API returns: ALCSD Common, RDOPD Common, ALC Common  
-  - ❌ API missing: ALCSD CSR, RDOPD-ext (both exist on official index)
-  
-- **Impact:** Users tracking complete collections will have gaps. The database can only sync what the API provides.
-
-**Potential Workarounds:**
-1. **Manual entry system** - Allow users to manually add missing printings they physically own
-2. **Community reports** - Let users report missing printings for admin review
-3. **Web scraping** (not ideal - fragile and against ToS)
-4. **Wait for API updates** - Contact Grand Archive to improve API completeness
-
-**Status:** 🔴 Unresolved - This is a limitation of the upstream API, not our code
-
-### 2. Image Loading Performance
+### 1. Image Loading Performance
 **Issue:** Loading 100 card images per page can be slow on poor connections  
 **Impact:** Page feels sluggish on initial load  
 **Potential Solutions:**
@@ -415,15 +423,20 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 - Add loading skeletons
 - Implement image CDN/optimization
 
-### 3. Search Performance
-**Issue:** Client-side search on 3,861 cards causes UI lag  
+### 2. Search Performance
+**Issue:** Client-side search on 4,000+ cards causes UI lag  
 **Impact:** Typing in search box feels unresponsive  
 **Fix Needed:** Move search to backend (server-side filtering)
 
-### 4. No Dark/Light Mode Toggle
+### 3. No Dark/Light Mode Toggle
 **Issue:** ThemeSwitch component exists but not in Navigation  
 **Impact:** Users stuck in one theme  
 **Fix:** Add ThemeSwitch to Navigation component
+
+### 4. Extended Art Variant Naming
+**Issue:** Extended art cards show same card number as regular versions (e.g., both RDOPD versions show as "006")
+**Impact:** Hard to tell which is extended art without comparing images
+**Potential Solution:** Add `-ext` suffix to card_number or create separate `variant` field in database
 
 ---
 
