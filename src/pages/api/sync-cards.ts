@@ -286,10 +286,12 @@ export default async function handler(
             : (card.cost_memory || 0),
           power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
           life: card.stats?.HP !== undefined ? card.stats.HP : null,
+          speed: card.speed !== null && card.speed !== undefined ? card.speed : null,
           effect_text: effect,
           flavor_text: edition.flavor || card.flavor || null,
           image_url: imageUrl,
           illustrator: edition.illustrator || null,
+          is_restricted: card.legality?.STANDARD?.limit === 0 || false,
         });
       });
     });
