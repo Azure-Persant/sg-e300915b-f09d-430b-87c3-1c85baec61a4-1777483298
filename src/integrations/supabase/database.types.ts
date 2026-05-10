@@ -60,11 +60,13 @@ export type Database = {
           id: string
           illustrator: string | null
           image_url: string | null
+          is_restricted: boolean | null
           life: number | null
           name: string
           power: number | null
           rarity: string
           set_id: string | null
+          speed: number | null
         }
         Insert: {
           card_number: string
@@ -78,11 +80,13 @@ export type Database = {
           id?: string
           illustrator?: string | null
           image_url?: string | null
+          is_restricted?: boolean | null
           life?: number | null
           name: string
           power?: number | null
           rarity: string
           set_id?: string | null
+          speed?: number | null
         }
         Update: {
           card_number?: string
@@ -96,11 +100,13 @@ export type Database = {
           id?: string
           illustrator?: string | null
           image_url?: string | null
+          is_restricted?: boolean | null
           life?: number | null
           name?: string
           power?: number | null
           rarity?: string
           set_id?: string | null
+          speed?: number | null
         }
         Relationships: [
           {

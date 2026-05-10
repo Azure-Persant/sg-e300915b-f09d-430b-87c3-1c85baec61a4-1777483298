@@ -4,10 +4,16 @@ import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, RefreshCw, Database } from "lucide-react";
+import { Search, Loader2, RefreshCw, Database, X } from "lucide-react";
 import type { Card as CardType } from "@/services/cardService";
 import { cardService } from "@/services/cardService";
 
@@ -20,7 +26,9 @@ export default function CardsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [dbStatus, setDbStatus] = useState<any>(null);
-  const cardsPerPage = 100;
+  const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const cardsPerPage = 120;
   const { toast } = useToast();
   const router = useRouter();
 
@@ -40,7 +48,6 @@ export default function CardsPage() {
           const progress = await response.json();
           setSyncProgress(progress);
 
-          // If sync finished, stop polling
           if (!progress.isRunning) {
             setSyncing(false);
             clearInterval(interval);
@@ -63,7 +70,7 @@ export default function CardsPage() {
         } catch (error) {
           console.error("Progress check error:", error);
         }
-      }, 1000); // Poll every second
+      }, 1000);
     }
 
     return () => {
@@ -114,7 +121,6 @@ export default function CardsPage() {
     setSyncProgress({ isRunning: true, message: "Starting sync...", currentPage: 0, totalPages: 0 });
     
     try {
-      const syncType = forceFullSync ? "full" : "incremental";
       toast({
         title: forceFullSync ? "Full sync started" : "Checking for updates...",
         description: forceFullSync 
@@ -122,7 +128,6 @@ export default function CardsPage() {
           : "Checking for new sets and cards...",
       });
 
-      // Start sync (it runs in background)
       fetch("/api/sync-cards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -136,8 +141,6 @@ export default function CardsPage() {
           variant: "destructive",
         });
       });
-
-      // Polling will handle the rest via useEffect
     } catch (error) {
       console.error("Sync error:", error);
       setSyncing(false);
@@ -149,10 +152,6 @@ export default function CardsPage() {
     }
   };
 
-  const filteredCards = cards.filter((card) =>
-    card.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     setCurrentPage(1);
@@ -162,6 +161,11 @@ export default function CardsPage() {
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCardClick = (card: CardType) => {
+    setSelectedCard(card);
+    setDialogOpen(true);
   };
 
   return (
@@ -223,7 +227,6 @@ export default function CardsPage() {
             </div>
           </div>
 
-          {/* Progress indicator */}
           {syncing && syncProgress && (
             <div className="mb-6 p-4 bg-slate-800 border border-cyan-500/30 rounded-lg">
               <div className="flex items-center gap-3 mb-2">
@@ -276,50 +279,31 @@ export default function CardsPage() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                 {cards.map((card) => (
                   <Card
                     key={card.id}
-                    className="bg-slate-800 border-slate-700 hover:border-cyan-500 transition-all cursor-pointer"
-                    onClick={() => router.push(`/cards/${card.id}`)}
+                    className="bg-slate-800 border-slate-700 hover:border-cyan-500 transition-all cursor-pointer overflow-hidden group"
+                    onClick={() => handleCardClick(card)}
                   >
-                    <CardHeader>
-                      <CardTitle className="text-white text-lg">{card.name}</CardTitle>
-                      <div className="flex gap-2 mt-2">
-                        {card.card_type && (
-                          <Badge variant="secondary" className="bg-slate-700">
-                            {card.card_type}
-                          </Badge>
-                        )}
-                        {card.rarity && (
-                          <Badge 
-                            variant="secondary"
-                            className={
-                              card.rarity === "common" ? "bg-gray-600" :
-                              card.rarity === "uncommon" ? "bg-green-600" :
-                              card.rarity === "rare" ? "bg-blue-600" :
-                              card.rarity === "super_rare" ? "bg-purple-600" :
-                              "bg-amber-600"
-                            }
-                          >
-                            {card.rarity.replace("_", " ").toUpperCase()}
-                          </Badge>
-                        )}
-                      </div>
-                    </CardHeader>
-                    <CardContent>
+                    <CardContent className="p-0">
                       {card.image_url && (
                         <img
                           src={card.image_url}
                           alt={card.name}
-                          className="w-full rounded-lg mb-3"
+                          className="w-full h-auto group-hover:scale-105 transition-transform duration-200"
                         />
                       )}
-                      {card.effect_text && (
-                        <p className="text-slate-300 text-sm line-clamp-3">
-                          {card.effect_text}
+                      <div className="p-2">
+                        <p className="text-white text-sm font-medium line-clamp-2 leading-tight">
+                          {card.name}
                         </p>
-                      )}
+                        {card.is_restricted && (
+                          <Badge className="mt-1 bg-red-600 text-white text-xs">
+                            Restricted
+                          </Badge>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -385,15 +369,119 @@ export default function CardsPage() {
                   >
                     Last
                   </Button>
-                  <span className="text-slate-500 mx-2">|</span>
-                  <span className="text-slate-400">
-                    Showing {((currentPage - 1) * cardsPerPage) + 1}-{Math.min(currentPage * cardsPerPage, cards.length)} of {totalPages * cardsPerPage} cards
-                  </span>
                 </div>
               </div>
             </>
           )}
         </main>
+
+        {/* Card Detail Dialog */}
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto bg-slate-900 border-slate-700">
+            <DialogHeader>
+              <DialogTitle className="text-2xl text-white flex items-center justify-between">
+                {selectedCard?.name}
+                {selectedCard?.is_restricted && (
+                  <Badge className="bg-red-600 text-white">Restricted</Badge>
+                )}
+              </DialogTitle>
+            </DialogHeader>
+            {selectedCard && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+                {/* Left: Card Image */}
+                <div className="flex items-start justify-center">
+                  {selectedCard.image_url && (
+                    <img
+                      src={selectedCard.image_url}
+                      alt={selectedCard.name}
+                      className="w-full max-w-md rounded-lg shadow-2xl"
+                    />
+                  )}
+                </div>
+
+                {/* Right: Card Details */}
+                <div className="space-y-4 text-white">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Name</h3>
+                    <p className="text-lg">{selectedCard.name}</p>
+                  </div>
+
+                  {selectedCard.rarity && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Rarity</h3>
+                      <p className="text-lg">{selectedCard.rarity}</p>
+                    </div>
+                  )}
+
+                  {selectedCard.card_type && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Type</h3>
+                      <p className="text-lg">{selectedCard.card_type}</p>
+                    </div>
+                  )}
+
+                  {selectedCard.element && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Element</h3>
+                      <p className="text-lg">{selectedCard.element}</p>
+                    </div>
+                  )}
+
+                  {selectedCard.cost !== null && selectedCard.cost !== undefined && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Cost</h3>
+                      <p className="text-lg">{selectedCard.cost}</p>
+                    </div>
+                  )}
+
+                  {selectedCard.effect_text && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Effect</h3>
+                      <p className="text-base leading-relaxed">{selectedCard.effect_text}</p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-4">
+                    {selectedCard.power !== null && selectedCard.power !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Power</h3>
+                        <p className="text-lg">{selectedCard.power}</p>
+                      </div>
+                    )}
+
+                    {selectedCard.life !== null && selectedCard.life !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Life</h3>
+                        <p className="text-lg">{selectedCard.life}</p>
+                      </div>
+                    )}
+
+                    {selectedCard.speed !== null && selectedCard.speed !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Speed</h3>
+                        <p className="text-lg">{selectedCard.speed}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedCard.class && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Class</h3>
+                      <p className="text-lg">{selectedCard.class}</p>
+                    </div>
+                  )}
+
+                  {selectedCard.illustrator && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Illustrator</h3>
+                      <p className="text-base italic text-slate-300">{selectedCard.illustrator}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </>
   );
