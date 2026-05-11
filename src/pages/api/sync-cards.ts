@@ -352,22 +352,36 @@ export default async function handler(
 
       // Add known restricted cards that the API doesn't return or to supplement the API list
       const knownRestrictedCards = [
+        "Altruistic Blacksmith",
         "Amorphous Missile",
         "Animal Encounter",
+        "Baby Green Slime",
         "Beckon Attention",
         "Bellona's Runestone",
+        "Buoyant Driftguard",
+        "Carpsong Coda",
+        "Charm of Anticipation",
         "Cheap Sword",
         "Cheerful Slime",
         "Clandestine Chart",
+        "Corhazi Outlook",
+        "Covert Manipulator",
         "Cowl of the Wild",
         "Crowd's Favor",
+        "Crystal of Empowerment",
+        "Dissonant Fractal",
         "Duxal Proclamation",
+        "Erupting Rhapsody",
         "Etherealys' Promise",
         "Fauna Friend",
+        "Gate of Alterity",
+        "Gem of Sorority",
+        "Gossamer Staff",
         "Greater Boon of Astraeus",
         "Greater Boon of Detachment",
         "Greater Boon of Dux",
-        "Nameless Champion",
+        "Greater Boon of Enki",
+        "Greater Boon of Horses",
       ];
       
       knownRestrictedCards.forEach(name => {
