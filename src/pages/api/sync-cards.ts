@@ -338,30 +338,44 @@ export default async function handler(
       const restrictedUrl = `${API_BASE_URL}/cards/search?legality_format=STANDARD&legality_state=RESTRICTED&limit=1000`;
       const restrictedResponse = await fetch(restrictedUrl);
       
+      const restrictedNames: string[] = [];
+      
       if (restrictedResponse.ok) {
         const restrictedData = await restrictedResponse.json();
         const restrictedCards = restrictedData.data || [];
         
-        console.log(`  Found ${restrictedCards.length} restricted cards`);
-        
-        if (restrictedCards.length > 0) {
-          // Get restricted card names
-          const restrictedNames = restrictedCards.map((card: any) => card.name);
-          
-          // Update all cards with matching names to set is_restricted = true
-          const { error: updateError } = await supabase
-            .from("cards")
-            .update({ is_restricted: true })
-            .in("name", restrictedNames);
-          
-          if (updateError) {
-            console.error("  ⚠️ Error updating restricted status:", updateError);
-          } else {
-            console.log(`  ✓ Updated ${restrictedNames.length} card names as restricted`);
-          }
-        }
+        console.log(`  Found ${restrictedCards.length} restricted cards from API`);
+        restrictedNames.push(...restrictedCards.map((card: any) => card.name));
       } else {
-        console.warn("  ⚠️ Failed to fetch restricted cards (non-critical)");
+        console.warn("  ⚠️ Failed to fetch restricted cards from API (non-critical)");
+      }
+
+      // Add known restricted cards that the API doesn't return
+      const knownRestrictedCards = [
+        "Baby Green Slime",
+      ];
+      
+      knownRestrictedCards.forEach(name => {
+        if (!restrictedNames.includes(name)) {
+          restrictedNames.push(name);
+          console.log(`  + Added manually: ${name}`);
+        }
+      });
+      
+      console.log(`  Total restricted cards to mark: ${restrictedNames.length}`);
+      
+      if (restrictedNames.length > 0) {
+        // Update all cards with matching names to set is_restricted = true
+        const { error: updateError } = await supabase
+          .from("cards")
+          .update({ is_restricted: true })
+          .in("name", restrictedNames);
+        
+        if (updateError) {
+          console.error("  ⚠️ Error updating restricted status:", updateError);
+        } else {
+          console.log(`  ✓ Updated ${restrictedNames.length} card names as restricted`);
+        }
       }
     } catch (restrictedError) {
       console.warn("  ⚠️ Error fetching restricted cards (non-critical):", restrictedError);
