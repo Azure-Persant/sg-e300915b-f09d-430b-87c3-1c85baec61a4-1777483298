@@ -1,424 +1,525 @@
 import { useState, useEffect } from "react";
-import { Navigation } from "@/components/Navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { cardService, type CollectionCard, type Set } from "@/services/cardService";
-import { useAuth } from "@/hooks/useAuth";
-import { Search, Filter, Plus, Minus, MapPin, BookOpen, BarChart3 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/router";
+import { SEO } from "@/components/SEO";
+import { Navigation } from "@/components/Navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { Search, Loader2, Plus, Pencil, Trash2, Package } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { collectionService, type CollectionItem } from "@/services/collectionService";
+import { cardService, type Card as CardType, type Set as SetType } from "@/services/cardService";
+
+// Helper function to convert text to Title Case
+const toTitleCase = (text: string | null | undefined): string => {
+  if (!text) return "";
+  return text
+    .split(" ")
+    .map(word => {
+      if (word === "—") return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+};
 
 export default function CollectionPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [cards, setCards] = useState<CollectionCard[]>([]);
-  const [sets, setSets] = useState<Set[]>([]);
+  const { toast } = useToast();
+
+  const [collection, setCollection] = useState<CollectionItem[]>([]);
+  const [sets, setSets] = useState<Map<string, SetType>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ totalCards: 0, uniqueCards: 0 });
-  const [search, setSearch] = useState("");
-  const [selectedSet, setSelectedSet] = useState<string>("all");
-  const [selectedRarity, setSelectedRarity] = useState<string>("all");
-  const [selectedType, setSelectedType] = useState<string>("all");
-  const [selectedElement, setSelectedElement] = useState<string>("all");
-  const [editingCard, setEditingCard] = useState<CollectionCard | null>(null);
-  const [quantity, setQuantity] = useState(0);
-  const [location, setLocation] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [stats, setStats] = useState({ totalCards: 0, totalQuantity: 0, uniqueCards: 0 });
+  
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<CollectionItem | null>(null);
+  const [editQuantity, setEditQuantity] = useState(1);
+  const [editLocation, setEditLocation] = useState("");
+  
+  const [cardDetailOpen, setCardDetailOpen] = useState(false);
+  const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
+  const [selectedPrintingId, setSelectedPrintingId] = useState<string>("");
+  const [cardPrintings, setCardPrintings] = useState<CardType[]>([]);
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.push("/auth/login");
+    } else if (user) {
+      loadCollection();
+      loadSets();
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading]);
 
-  useEffect(() => {
-    if (user) {
-      loadData();
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      filterCards();
-    }
-  }, [search, selectedSet, selectedRarity, selectedType, selectedElement, user]);
-
-  const loadData = async () => {
-    if (!user) return;
+  const loadSets = async () => {
     try {
-      const [setsData, statsData] = await Promise.all([
-        cardService.getAllSets(),
-        cardService.getCollectionStats(user.id),
+      const data = await cardService.getAllSets();
+      const setsMap = new Map<string, SetType>();
+      data.forEach(set => setsMap.set(set.id, set));
+      setSets(setsMap);
+    } catch (error) {
+      console.error("Failed to load sets:", error);
+    }
+  };
+
+  const loadCollection = async () => {
+    if (!user) return;
+    
+    try {
+      setLoading(true);
+      const [collectionData, statsData] = await Promise.all([
+        collectionService.getCollection(user.id),
+        collectionService.getCollectionStats(user.id),
       ]);
-      setSets(setsData);
+      
+      setCollection(collectionData);
       setStats(statsData);
-      await filterCards();
     } catch (error) {
-      console.error("Error loading data:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load collection",
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const filterCards = async () => {
+  const handleEditCard = (item: CollectionItem) => {
+    setSelectedItem(item);
+    setEditQuantity(item.quantity);
+    setEditLocation(item.location || "");
+    setEditDialogOpen(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!user || !selectedItem) return;
+
+    try {
+      await collectionService.updateCard(
+        user.id,
+        selectedItem.card_id,
+        editQuantity,
+        editLocation
+      );
+      
+      toast({
+        title: "Updated",
+        description: "Card updated successfully",
+      });
+      
+      setEditDialogOpen(false);
+      loadCollection();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to update card",
+      });
+    }
+  };
+
+  const handleRemoveCard = async (cardId: string) => {
     if (!user) return;
-    setLoading(true);
+
     try {
-      const filters: any = {};
-      if (selectedSet !== "all") filters.setId = selectedSet;
-      if (selectedRarity !== "all") filters.rarity = selectedRarity;
-      if (selectedType !== "all") filters.cardType = selectedType;
-      if (selectedElement !== "all") filters.element = selectedElement;
-      if (search) filters.search = search;
-
-      const data = await cardService.getUserCollection(user.id, filters);
-      setCards(data);
+      await collectionService.removeCard(user.id, cardId);
+      toast({
+        title: "Removed",
+        description: "Card removed from collection",
+      });
+      loadCollection();
     } catch (error) {
-      console.error("Error filtering cards:", error);
-    } finally {
-      setLoading(false);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to remove card",
+      });
     }
   };
 
-  const handleEdit = (card: CollectionCard) => {
-    setEditingCard(card);
-    const collection = Array.isArray(card.user_collections) ? card.user_collections[0] : card.user_collections;
-    setQuantity(collection?.quantity || 0);
-    setLocation(collection?.location || "");
-  };
-
-  const handleSave = async () => {
-    if (!user || !editingCard) return;
+  const handleCardClick = async (card: CardType) => {
     try {
-      await cardService.updateCollection(user.id, editingCard.id, quantity, location);
-      setEditingCard(null);
-      await loadData();
+      // Get all printings of this card
+      const allCards = await cardService.getCards();
+      const printings = allCards.filter(c => c.name === card.name);
+      setCardPrintings(printings);
+      setSelectedCard(card);
+      setSelectedPrintingId(card.id);
+      setCardDetailOpen(true);
     } catch (error) {
-      console.error("Error updating collection:", error);
+      console.error("Error loading card printings:", error);
     }
   };
 
-  const getRarityColor = (rarity: string) => {
-    switch (rarity.toLowerCase()) {
-      case "common": return "bg-slate-500";
-      case "uncommon": return "bg-green-500";
-      case "rare": return "bg-blue-500";
-      case "super rare": return "bg-purple-500";
-      case "ultra rare": return "bg-amber-500";
-      default: return "bg-gray-500";
-    }
+  const getSetName = (card: CardType): string => {
+    const set = sets.get(card.set_id);
+    return set?.name || "Unknown";
   };
+
+  const filteredCollection = searchQuery
+    ? collection.filter(item =>
+        item.card?.name.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : collection;
+
+  const currentCard = cardPrintings.find(p => p.id === selectedPrintingId) || selectedCard;
 
   if (authLoading || !user) {
     return (
-      <>
-        <Navigation />
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-        </div>
-      </>
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-cyan-500" />
+      </div>
     );
   }
 
   return (
     <>
-      <Navigation />
-      <main className="min-h-screen bg-gradient-to-b from-background to-secondary/10">
-        <div className="container py-8">
-          <div className="mb-8">
-            <h1 className="text-4xl font-heading font-bold mb-2">My Collection</h1>
-            <p className="text-muted-foreground">
-              Track and organize your Grand Archive cards
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-6 mb-8">
-            <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Total Cards</CardTitle>
-                <BookOpen className="h-4 w-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-heading font-bold">{stats.totalCards}</div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-accent/20 bg-gradient-to-br from-accent/5 to-accent/10">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Unique Cards</CardTitle>
-                <BarChart3 className="h-4 w-4 text-accent" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-heading font-bold">{stats.uniqueCards}</div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/50">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Collection Value</CardTitle>
-                <span className="text-2xl">💎</span>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-heading font-bold">Coming Soon</div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="grid lg:grid-cols-4 gap-6">
-            <div className="lg:col-span-1 space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Filter className="h-5 w-5" />
-                    Filters
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Search</label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Card name..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="pl-9"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Set</label>
-                    <Select value={selectedSet} onValueChange={setSelectedSet}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Sets</SelectItem>
-                        {sets.map((set) => (
-                          <SelectItem key={set.id} value={set.id}>
-                            {set.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Rarity</label>
-                    <Select value={selectedRarity} onValueChange={setSelectedRarity}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Rarities</SelectItem>
-                        <SelectItem value="Common">Common</SelectItem>
-                        <SelectItem value="Uncommon">Uncommon</SelectItem>
-                        <SelectItem value="Rare">Rare</SelectItem>
-                        <SelectItem value="Super Rare">Super Rare</SelectItem>
-                        <SelectItem value="Ultra Rare">Ultra Rare</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Type</label>
-                    <Select value={selectedType} onValueChange={setSelectedType}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="Champion">Champion</SelectItem>
-                        <SelectItem value="Regalia">Regalia</SelectItem>
-                        <SelectItem value="Action">Action</SelectItem>
-                        <SelectItem value="Attack">Attack</SelectItem>
-                        <SelectItem value="Ally">Ally</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Element</label>
-                    <Select value={selectedElement} onValueChange={setSelectedElement}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Elements</SelectItem>
-                        <SelectItem value="Fire">Fire</SelectItem>
-                        <SelectItem value="Water">Water</SelectItem>
-                        <SelectItem value="Wind">Wind</SelectItem>
-                        <SelectItem value="Arcane">Arcane</SelectItem>
-                        <SelectItem value="Luxem">Luxem</SelectItem>
-                        <SelectItem value="Crux">Crux</SelectItem>
-                        <SelectItem value="Tera">Tera</SelectItem>
-                        <SelectItem value="Neos">Neos</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => {
-                      setSearch("");
-                      setSelectedSet("all");
-                      setSelectedRarity("all");
-                      setSelectedType("all");
-                      setSelectedElement("all");
-                    }}
-                  >
-                    Clear Filters
-                  </Button>
-
-                  <Button
-                    className="w-full"
-                    asChild
-                  >
-                    <Link href="/cards">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Cards
-                    </Link>
-                  </Button>
-                </CardContent>
-              </Card>
+      <SEO
+        title="My Collection - Grand Archive TCG"
+        description="Manage your Grand Archive TCG card collection"
+      />
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <Navigation />
+        
+        <main className="container mx-auto px-4 py-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+            <div>
+              <h1 className="text-4xl font-bold text-white mb-2">My Collection</h1>
+              <div className="flex items-center gap-6 mt-3">
+                <div className="flex items-center gap-2">
+                  <Package className="h-5 w-5 text-cyan-400" />
+                  <span className="text-slate-300">
+                    <span className="font-semibold text-white">{stats.uniqueCards}</span> unique cards
+                  </span>
+                </div>
+                <div className="text-slate-300">
+                  <span className="font-semibold text-white">{stats.totalQuantity}</span> total cards
+                </div>
+              </div>
             </div>
+            
+            <Button
+              onClick={() => router.push("/cards")}
+              className="bg-cyan-500 hover:bg-cyan-600 text-white"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Cards
+            </Button>
+          </div>
 
-            <div className="lg:col-span-3">
-              {loading ? (
-                <div className="text-center py-12">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  <p className="mt-4 text-muted-foreground">Loading collection...</p>
-                </div>
-              ) : cards.length === 0 ? (
-                <div className="text-center py-12">
-                  <BookOpen className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
-                  <p className="text-lg font-medium mb-2">Your collection is empty</p>
-                  <p className="text-muted-foreground mb-6">Start adding cards to track your Grand Archive collection</p>
-                  <Button asChild>
-                    <Link href="/cards">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Browse Cards
-                    </Link>
-                  </Button>
-                </div>
-              ) : (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {cards.map((card) => {
-                    const collection = Array.isArray(card.user_collections) ? card.user_collections[0] : card.user_collections;
-                    return (
-                      <Dialog key={card.id}>
-                        <DialogTrigger asChild>
-                          <Card 
-                            className="group hover:shadow-lg transition-all duration-300 hover:-translate-y-1 cursor-pointer border-border/50 overflow-hidden"
-                            onClick={() => handleEdit(card)}
+          <div className="mb-6">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 h-5 w-5" />
+              <Input
+                type="text"
+                placeholder="Search your collection..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 bg-slate-800 border-slate-700 text-white placeholder:text-slate-400"
+              />
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center items-center py-20">
+              <Loader2 className="h-8 w-8 animate-spin text-cyan-500" />
+            </div>
+          ) : filteredCollection.length === 0 ? (
+            <div className="text-center py-20">
+              <Package className="h-16 w-16 mx-auto mb-4 text-slate-600" />
+              <p className="text-slate-400 text-lg mb-4">
+                {searchQuery ? "No cards found in your collection" : "Your collection is empty"}
+              </p>
+              <Button
+                onClick={() => router.push("/cards")}
+                className="bg-cyan-500 hover:bg-cyan-600 text-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Your First Cards
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredCollection.map((item) => (
+                <Card
+                  key={item.id}
+                  className="bg-slate-800 border-slate-700 overflow-hidden"
+                >
+                  <CardContent className="p-4">
+                    <div className="flex gap-4">
+                      <div 
+                        className="flex-shrink-0 w-24 cursor-pointer"
+                        onClick={() => item.card && handleCardClick(item.card)}
+                      >
+                        {item.card?.image_url && (
+                          <img
+                            src={item.card.image_url}
+                            alt={item.card.name}
+                            className="w-full rounded hover:scale-105 transition-transform"
+                          />
+                        )}
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <h3 
+                            className="text-white font-semibold cursor-pointer hover:text-cyan-400 transition-colors"
+                            onClick={() => item.card && handleCardClick(item.card)}
                           >
-                            <div className="aspect-[2.5/3.5] bg-secondary/20 relative overflow-hidden">
-                              <img
-                                src={card.image_url}
-                                alt={card.name}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                              />
-                              <div className="absolute top-2 right-2 bg-background/90 backdrop-blur-sm rounded-full px-3 py-1 text-sm font-semibold">
-                                ×{collection?.quantity || 0}
-                              </div>
-                            </div>
-                            <CardContent className="p-4">
-                              <h3 className="font-heading font-semibold mb-2 line-clamp-1">
-                                {card.name}
-                              </h3>
-                              <div className="flex items-center gap-2 flex-wrap mb-2">
-                                <Badge className={`${getRarityColor(card.rarity)} text-white`}>
-                                  {card.rarity}
-                                </Badge>
-                                {card.element && (
-                                  <Badge variant="outline">{card.element}</Badge>
-                                )}
-                              </div>
-                              {collection?.location && (
-                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                  <MapPin className="h-3 w-3" />
-                                  {collection.location}
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle className="font-heading">Edit Collection</DialogTitle>
-                          </DialogHeader>
-                          {editingCard && (
-                            <div className="space-y-4">
-                              <div>
-                                <h3 className="font-heading font-semibold mb-2">{editingCard.name}</h3>
-                                <div className="flex gap-2">
-                                  <Badge className={`${getRarityColor(editingCard.rarity)} text-white`}>
-                                    {editingCard.rarity}
-                                  </Badge>
-                                  {editingCard.element && (
-                                    <Badge variant="outline">{editingCard.element}</Badge>
-                                  )}
-                                  <Badge variant="secondary">{editingCard.card_type}</Badge>
-                                </div>
-                              </div>
-                              
-                              <div className="space-y-2">
-                                <Label>Quantity</Label>
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    onClick={() => setQuantity(Math.max(0, quantity - 1))}
-                                  >
-                                    <Minus className="h-4 w-4" />
-                                  </Button>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    value={quantity}
-                                    onChange={(e) => setQuantity(parseInt(e.target.value) || 0)}
-                                    className="text-center"
-                                  />
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    onClick={() => setQuantity(quantity + 1)}
-                                  >
-                                    <Plus className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              </div>
-
-                              <div className="space-y-2">
-                                <Label>Location (Optional)</Label>
-                                <Input
-                                  placeholder="e.g., Binder 1, Deck Box, Storage..."
-                                  value={location}
-                                  onChange={(e) => setLocation(e.target.value)}
-                                />
-                              </div>
-
-                              <Button onClick={handleSave} className="w-full">
-                                Save Changes
-                              </Button>
+                            {item.card?.name}
+                          </h3>
+                          {item.card?.is_restricted && (
+                            <Badge className="bg-red-600 text-white text-xs flex-shrink-0">
+                              Restricted
+                            </Badge>
+                          )}
+                        </div>
+                        
+                        <div className="space-y-1 text-sm">
+                          <div className="text-slate-400">
+                            Quantity: <span className="text-white font-medium">{item.quantity}</span>
+                          </div>
+                          {item.location && (
+                            <div className="text-slate-400">
+                              Location: <span className="text-white">{item.location}</span>
                             </div>
                           )}
-                        </DialogContent>
-                      </Dialog>
-                    );
-                  })}
-                </div>
-              )}
+                          {item.card?.rarity && (
+                            <div className="text-slate-400">
+                              Rarity: <span className="text-white">{item.card.rarity}</span>
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="flex gap-2 mt-3">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleEditCard(item)}
+                            className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
+                          >
+                            <Pencil className="h-3 w-3 mr-1" />
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRemoveCard(item.card_id)}
+                            className="border-red-500 text-red-400 hover:bg-red-500/10"
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-          </div>
-        </div>
-      </main>
+          )}
+        </main>
+
+        {/* Edit Card Dialog */}
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="bg-slate-900 border-slate-700">
+            <DialogHeader>
+              <DialogTitle className="text-white">Edit Card</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label htmlFor="quantity" className="text-white">Quantity</Label>
+                <Input
+                  id="quantity"
+                  type="number"
+                  min="0"
+                  value={editQuantity}
+                  onChange={(e) => setEditQuantity(parseInt(e.target.value) || 0)}
+                  className="bg-slate-800 border-slate-700 text-white"
+                />
+              </div>
+              <div>
+                <Label htmlFor="location" className="text-white">Location (optional)</Label>
+                <Input
+                  id="location"
+                  type="text"
+                  placeholder="e.g., Binder 1, Deck Box, Storage"
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  className="bg-slate-800 border-slate-700 text-white"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setEditDialogOpen(false)}
+                className="border-slate-700 text-white hover:bg-slate-800"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveEdit}
+                className="bg-cyan-500 hover:bg-cyan-600 text-white"
+              >
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Card Detail Dialog */}
+        <Dialog open={cardDetailOpen} onOpenChange={setCardDetailOpen}>
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto bg-slate-900 border-slate-700">
+            <DialogHeader>
+              <DialogTitle className="text-2xl text-white flex items-center justify-between">
+                <span>{currentCard?.name}</span>
+                <div className="flex items-center gap-2">
+                  {currentCard?.is_restricted && (
+                    <Badge className="bg-red-600 text-white">Restricted</Badge>
+                  )}
+                  {cardPrintings.length > 1 && (
+                    <Badge variant="outline" className="border-cyan-500 text-cyan-400">
+                      {cardPrintings.length} printings
+                    </Badge>
+                  )}
+                </div>
+              </DialogTitle>
+            </DialogHeader>
+            {currentCard && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+                <div className="flex flex-col items-center justify-start gap-4">
+                  {currentCard.image_url && (
+                    <img
+                      src={currentCard.image_url}
+                      alt={currentCard.name}
+                      className="w-[95%] max-w-[380px] rounded-lg shadow-2xl"
+                    />
+                  )}
+                  {cardPrintings.length > 1 && (
+                    <div className="w-full max-w-md">
+                      <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
+                        <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-800 border-slate-700">
+                          {cardPrintings.map((printing) => (
+                            <SelectItem 
+                              key={printing.id} 
+                              value={printing.id}
+                              className="text-white hover:bg-slate-700 focus:bg-slate-700"
+                            >
+                              {getSetName(printing)} - {printing.rarity}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4 text-white">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Name</h3>
+                    <p className="text-lg">{currentCard.name}</p>
+                  </div>
+
+                  {currentCard.rarity && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Rarity</h3>
+                      <p className="text-lg">{currentCard.rarity}</p>
+                    </div>
+                  )}
+
+                  {currentCard.card_type && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Type</h3>
+                      <p className="text-lg">{toTitleCase(currentCard.card_type)}</p>
+                    </div>
+                  )}
+
+                  {currentCard.element && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Element</h3>
+                      <p className="text-lg">{toTitleCase(currentCard.element)}</p>
+                    </div>
+                  )}
+
+                  {currentCard.cost !== null && currentCard.cost !== undefined && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Cost</h3>
+                      <p className="text-lg">{currentCard.cost}</p>
+                    </div>
+                  )}
+
+                  {currentCard.effect_text && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Effect</h3>
+                      <p className="text-base leading-relaxed">{currentCard.effect_text}</p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-4">
+                    {currentCard.power !== null && currentCard.power !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Power</h3>
+                        <p className="text-lg">{currentCard.power}</p>
+                      </div>
+                    )}
+
+                    {currentCard.life !== null && currentCard.life !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Life</h3>
+                        <p className="text-lg">{currentCard.life}</p>
+                      </div>
+                    )}
+
+                    {currentCard.speed !== null && currentCard.speed !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Speed</h3>
+                        <p className="text-lg">{currentCard.speed}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {currentCard.class && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Class</h3>
+                      <p className="text-lg">{currentCard.class}</p>
+                    </div>
+                  )}
+
+                  {currentCard.illustrator && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Illustrator</h3>
+                      <p className="text-base italic text-slate-300">{currentCard.illustrator}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
     </>
   );
 }
