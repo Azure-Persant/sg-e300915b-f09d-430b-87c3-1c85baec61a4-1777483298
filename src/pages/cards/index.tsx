@@ -229,10 +229,10 @@ export default function CardsPage() {
   const currentCard = selectedCardPrintings.find(p => p.id === selectedPrintingId) || selectedCardPrintings[0];
   const hasMultiplePrintings = selectedCardPrintings.length > 1;
 
-  // Helper to get set code for a card
-  const getSetCode = (card: CardType): string => {
+  // Helper to get set name for a card
+  const getSetName = (card: CardType): string => {
     const set = sets.get(card.set_id);
-    return set?.code || "Unknown";
+    return set?.name || "Unknown";
   };
 
   return (
@@ -465,8 +465,15 @@ export default function CardsPage() {
             </DialogHeader>
             {currentCard && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-                {/* Left: Card Image with Printing Selector */}
+                {/* Left: Card Image with Printing Selector Below */}
                 <div className="flex flex-col items-center justify-start gap-4">
+                  {currentCard.image_url && (
+                    <img
+                      src={currentCard.image_url}
+                      alt={currentCard.name}
+                      className="w-full max-w-md rounded-lg shadow-2xl"
+                    />
+                  )}
                   {hasMultiplePrintings && (
                     <div className="w-full max-w-md">
                       <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
@@ -475,27 +482,20 @@ export default function CardsPage() {
                         </SelectTrigger>
                         <SelectContent className="bg-slate-800 border-slate-700">
                           {selectedCardPrintings.map((printing) => {
-                            const setCode = getSetCode(printing);
+                            const setName = getSetName(printing);
                             return (
                               <SelectItem 
                                 key={printing.id} 
                                 value={printing.id}
                                 className="text-white hover:bg-slate-700 focus:bg-slate-700"
                               >
-                                {setCode} - {printing.rarity}
+                                {setName} - {printing.rarity}
                               </SelectItem>
                             );
                           })}
                         </SelectContent>
                       </Select>
                     </div>
-                  )}
-                  {currentCard.image_url && (
-                    <img
-                      src={currentCard.image_url}
-                      alt={currentCard.name}
-                      className="w-full max-w-md rounded-lg shadow-2xl"
-                    />
                   )}
                 </div>
 
