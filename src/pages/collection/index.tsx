@@ -50,10 +50,22 @@ export default function CollectionPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stats, setStats] = useState({ totalCards: 0, totalQuantity: 0, uniqueCards: 0 });
   
+  // Grouped collection by card name with printing details
+  interface GroupedCard {
+    cardName: string;
+    printings: Array<{
+      item: CollectionItem;
+      setCode: string;
+      setName: string;
+    }>;
+    totalQuantity: number;
+    representativeCard: CardType;
+  }
+  const [groupedCollection, setGroupedCollection] = useState<GroupedCard[]>([]);
+  
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<CollectionItem | null>(null);
-  const [editQuantity, setEditQuantity] = useState(1);
-  const [editLocation, setEditLocation] = useState("");
+  const [selectedGroupedCard, setSelectedGroupedCard] = useState<GroupedCard | null>(null);
+  const [editPrintings, setEditPrintings] = useState<Array<{ cardId: string; setCode: string; quantity: number; location: string }>>([]);
   
   const [cardDetailOpen, setCardDetailOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
@@ -92,6 +104,39 @@ export default function CollectionPage() {
       
       setCollection(collectionData);
       setStats(statsData);
+      
+      // Group by card name
+      const grouped = new Map<string, GroupedCard>();
+      
+      collectionData.forEach(item => {
+        if (!item.card) return;
+        
+        const cardName = item.card.name;
+        const set = sets.get(item.card.set_id);
+        const setCode = set?.code || "???";
+        const setName = set?.name || "Unknown";
+        
+        if (!grouped.has(cardName)) {
+          grouped.set(cardName, {
+            cardName,
+            printings: [],
+            totalQuantity: 0,
+            representativeCard: item.card,
+          });
+        }
+        
+        const group = grouped.get(cardName)!;
+        group.printings.push({
+          item,
+          setCode,
+          setName,
+        });
+        group.totalQuantity += item.quantity;
+      });
+      
+      setGroupedCollection(Array.from(grouped.values()).sort((a, b) => 
+        a.cardName.localeCompare(b.cardName)
+      ));
     } catch (error) {
       toast({
         variant: "destructive",
@@ -103,22 +148,37 @@ export default function CollectionPage() {
     }
   };
 
-  const handleEditCard = (item: CollectionItem) => {
-    setSelectedItem(item);
-    setEditQuantity(item.quantity);
-    setEditLocation(item.location || "");
+  const handleEditCard = (groupedCard: GroupedCard) => {
+    setSelectedGroupedCard(groupedCard);
+    setEditPrintings(groupedCard.printings.map(p => ({
+      cardId: p.item.card_id,
+      setCode: p.setCode,
+      quantity: p.item.quantity,
+      location: p.item.location || "",
+    })));
     setEditDialogOpen(true);
   };
 
+  const handleUpdatePrinting = (cardId: string, field: 'quantity' | 'location', value: string | number) => {
+    setEditPrintings(prev => prev.map(p => 
+      p.cardId === cardId ? { ...p, [field]: value } : p
+    ));
+  };
+
   const handleSaveEdit = async () => {
-    if (!user || !selectedItem) return;
+    if (!user || !selectedGroupedCard) return;
 
     try {
-      await collectionService.updateCard(
-        user.id,
-        selectedItem.card_id,
-        editQuantity,
-        editLocation
+      // Update each printing
+      await Promise.all(
+        editPrintings.map(printing => 
+          collectionService.updateCard(
+            user.id,
+            printing.cardId,
+            printing.quantity,
+            printing.location
+          )
+        )
       );
       
       toast({
@@ -137,21 +197,33 @@ export default function CollectionPage() {
     }
   };
 
-  const handleRemoveCard = async (cardId: string) => {
+  const handleRemovePrinting = async (cardId: string) => {
     if (!user) return;
 
     try {
       await collectionService.removeCard(user.id, cardId);
       toast({
         title: "Removed",
-        description: "Card removed from collection",
+        description: "Printing removed from collection",
       });
-      loadCollection();
+      
+      // Reload or update local state
+      const updatedPrintings = editPrintings.filter(p => p.cardId !== cardId);
+      
+      if (updatedPrintings.length === 0) {
+        // All printings removed, close dialog and reload
+        setEditDialogOpen(false);
+        loadCollection();
+      } else {
+        // Update local state
+        setEditPrintings(updatedPrintings);
+        loadCollection();
+      }
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to remove card",
+        description: "Failed to remove printing",
       });
     }
   };
@@ -176,10 +248,10 @@ export default function CollectionPage() {
   };
 
   const filteredCollection = searchQuery
-    ? collection.filter(item =>
-        item.card?.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ? groupedCollection.filter(group =>
+        group.cardName.toLowerCase().includes(searchQuery.toLowerCase())
       )
-    : collection;
+    : groupedCollection;
 
   const currentCard = cardPrintings.find(p => p.id === selectedPrintingId) || selectedCard;
 
@@ -259,21 +331,21 @@ export default function CollectionPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredCollection.map((item) => (
+              {filteredCollection.map((group) => (
                 <Card
-                  key={item.id}
+                  key={group.cardName}
                   className="bg-slate-800 border-slate-700 overflow-hidden"
                 >
                   <CardContent className="p-4">
                     <div className="flex gap-4">
                       <div 
                         className="flex-shrink-0 w-24 cursor-pointer"
-                        onClick={() => item.card && handleCardClick(item.card)}
+                        onClick={() => handleCardClick(group.representativeCard)}
                       >
-                        {item.card?.image_url && (
+                        {group.representativeCard.image_url && (
                           <img
-                            src={item.card.image_url}
-                            alt={item.card.name}
+                            src={group.representativeCard.image_url}
+                            alt={group.cardName}
                             className="w-full rounded hover:scale-105 transition-transform"
                           />
                         )}
@@ -283,51 +355,49 @@ export default function CollectionPage() {
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <h3 
                             className="text-white font-semibold cursor-pointer hover:text-cyan-400 transition-colors"
-                            onClick={() => item.card && handleCardClick(item.card)}
+                            onClick={() => handleCardClick(group.representativeCard)}
                           >
-                            {item.card?.name}
+                            {group.cardName}
                           </h3>
-                          {item.card?.is_restricted && (
+                          {group.representativeCard.is_restricted && (
                             <Badge className="bg-red-600 text-white text-xs flex-shrink-0">
                               Restricted
                             </Badge>
                           )}
                         </div>
                         
-                        <div className="space-y-1 text-sm">
+                        <div className="space-y-2 text-sm">
                           <div className="text-slate-400">
-                            Quantity: <span className="text-white font-medium">{item.quantity}</span>
+                            Total: <span className="text-white font-medium">{group.totalQuantity}</span>
                           </div>
-                          {item.location && (
-                            <div className="text-slate-400">
-                              Location: <span className="text-white">{item.location}</span>
-                            </div>
-                          )}
-                          {item.card?.rarity && (
-                            <div className="text-slate-400">
-                              Rarity: <span className="text-white">{item.card.rarity}</span>
-                            </div>
-                          )}
+                          
+                          {/* Quantity per set */}
+                          <div className="space-y-1">
+                            {group.printings.map((printing, idx) => (
+                              <div key={idx} className="flex items-center gap-2 text-xs">
+                                <Badge variant="outline" className="border-cyan-500 text-cyan-400 font-mono">
+                                  {printing.setCode}
+                                </Badge>
+                                <span className="text-white">{printing.item.quantity}x</span>
+                                {printing.item.location && (
+                                  <span className="text-slate-400 text-xs">
+                                    ({printing.item.location})
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                         
                         <div className="flex gap-2 mt-3">
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleEditCard(item)}
+                            onClick={() => handleEditCard(group)}
                             className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
                           >
                             <Pencil className="h-3 w-3 mr-1" />
                             Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleRemoveCard(item.card_id)}
-                            className="border-red-500 text-red-400 hover:bg-red-500/10"
-                          >
-                            <Trash2 className="h-3 w-3 mr-1" />
-                            Remove
                           </Button>
                         </div>
                       </div>
@@ -341,33 +411,53 @@ export default function CollectionPage() {
 
         {/* Edit Card Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="bg-slate-900 border-slate-700">
+          <DialogContent className="bg-slate-900 border-slate-700 max-w-2xl">
             <DialogHeader>
-              <DialogTitle className="text-white">Edit Card</DialogTitle>
+              <DialogTitle className="text-white">Edit {selectedGroupedCard?.cardName}</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div>
-                <Label htmlFor="quantity" className="text-white">Quantity</Label>
-                <Input
-                  id="quantity"
-                  type="number"
-                  min="0"
-                  value={editQuantity}
-                  onChange={(e) => setEditQuantity(parseInt(e.target.value) || 0)}
-                  className="bg-slate-800 border-slate-700 text-white"
-                />
-              </div>
-              <div>
-                <Label htmlFor="location" className="text-white">Location (optional)</Label>
-                <Input
-                  id="location"
-                  type="text"
-                  placeholder="e.g., Binder 1, Deck Box, Storage"
-                  value={editLocation}
-                  onChange={(e) => setEditLocation(e.target.value)}
-                  className="bg-slate-800 border-slate-700 text-white"
-                />
-              </div>
+            <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
+              {editPrintings.map((printing, idx) => (
+                <div key={printing.cardId} className="p-4 bg-slate-800 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="outline" className="border-cyan-500 text-cyan-400 font-mono text-sm">
+                      {printing.setCode}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRemovePrinting(printing.cardId)}
+                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor={`quantity-${idx}`} className="text-white text-sm">Quantity</Label>
+                      <Input
+                        id={`quantity-${idx}`}
+                        type="number"
+                        min="0"
+                        value={printing.quantity}
+                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'quantity', parseInt(e.target.value) || 0)}
+                        className="bg-slate-700 border-slate-600 text-white mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor={`location-${idx}`} className="text-white text-sm">Location</Label>
+                      <Input
+                        id={`location-${idx}`}
+                        type="text"
+                        placeholder="Optional"
+                        value={printing.location}
+                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'location', e.target.value)}
+                        className="bg-slate-700 border-slate-600 text-white mt-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
             <DialogFooter>
               <Button
