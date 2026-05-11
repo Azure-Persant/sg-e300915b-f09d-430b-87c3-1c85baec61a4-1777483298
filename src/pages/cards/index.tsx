@@ -473,7 +473,7 @@ export default function CardsPage() {
                     <img
                       src={currentCard.image_url}
                       alt={currentCard.name}
-                      className="w-full max-w-md rounded-lg shadow-2xl"
+                      className="w-[95%] max-w-[380px] rounded-lg shadow-2xl"
                     />
                   )}
                   {hasMultiplePrintings && (
