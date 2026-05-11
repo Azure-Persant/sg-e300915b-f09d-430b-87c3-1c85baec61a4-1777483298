@@ -7,14 +7,21 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, RefreshCw, Database, ChevronLeft, ChevronRight } from "lucide-react";
-import type { Card as CardType } from "@/services/cardService";
+import { Search, Loader2, RefreshCw, Database } from "lucide-react";
+import type { Card as CardType, Set as SetType } from "@/services/cardService";
 import { cardService } from "@/services/cardService";
 
 // Helper function to convert text to Title Case
@@ -32,6 +39,7 @@ const toTitleCase = (text: string | null | undefined): string => {
 
 export default function CardsPage() {
   const [allCards, setAllCards] = useState<CardType[]>([]);
+  const [sets, setSets] = useState<Map<string, SetType>>(new Map());
   const [groupedCards, setGroupedCards] = useState<Map<string, CardType[]>>(new Map());
   const [displayCards, setDisplayCards] = useState<CardType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,13 +50,14 @@ export default function CardsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [dbStatus, setDbStatus] = useState<any>(null);
   const [selectedCardPrintings, setSelectedCardPrintings] = useState<CardType[]>([]);
-  const [currentPrintingIndex, setCurrentPrintingIndex] = useState(0);
+  const [selectedPrintingId, setSelectedPrintingId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const cardsPerPage = 120;
   const { toast } = useToast();
   const router = useRouter();
 
   useEffect(() => {
+    loadSets();
     loadCards();
     loadDbStatus();
   }, [currentPage, searchQuery]);
@@ -93,6 +102,17 @@ export default function CardsPage() {
       if (interval) clearInterval(interval);
     };
   }, [syncing]);
+
+  const loadSets = async () => {
+    try {
+      const data = await cardService.getAllSets();
+      const setsMap = new Map<string, SetType>();
+      data.forEach(set => setsMap.set(set.id, set));
+      setSets(setsMap);
+    } catch (error) {
+      console.error("Failed to load sets:", error);
+    }
+  };
 
   const loadDbStatus = async () => {
     try {
@@ -202,24 +222,18 @@ export default function CardsPage() {
     // Get all printings of this card
     const printings = groupedCards.get(card.name) || [card];
     setSelectedCardPrintings(printings);
-    setCurrentPrintingIndex(0);
+    setSelectedPrintingId(printings[0].id);
     setDialogOpen(true);
   };
 
-  const handlePreviousPrinting = () => {
-    setCurrentPrintingIndex((prev) => 
-      prev > 0 ? prev - 1 : selectedCardPrintings.length - 1
-    );
-  };
-
-  const handleNextPrinting = () => {
-    setCurrentPrintingIndex((prev) => 
-      prev < selectedCardPrintings.length - 1 ? prev + 1 : 0
-    );
-  };
-
-  const currentCard = selectedCardPrintings[currentPrintingIndex];
+  const currentCard = selectedCardPrintings.find(p => p.id === selectedPrintingId) || selectedCardPrintings[0];
   const hasMultiplePrintings = selectedCardPrintings.length > 1;
+
+  // Helper to get set code for a card
+  const getSetCode = (card: CardType): string => {
+    const set = sets.get(card.set_id);
+    return set?.code || "Unknown";
+  };
 
   return (
     <>
@@ -444,45 +458,36 @@ export default function CardsPage() {
             <DialogHeader>
               <DialogTitle className="text-2xl text-white flex items-center justify-between">
                 <span>{currentCard?.name}</span>
-                <div className="flex items-center gap-2">
-                  {currentCard?.is_restricted && (
-                    <Badge className="bg-red-600 text-white">Restricted</Badge>
-                  )}
-                  {hasMultiplePrintings && (
-                    <Badge variant="outline" className="border-cyan-500 text-cyan-400">
-                      Printing {currentPrintingIndex + 1} of {selectedCardPrintings.length}
-                    </Badge>
-                  )}
-                </div>
+                {currentCard?.is_restricted && (
+                  <Badge className="bg-red-600 text-white">Restricted</Badge>
+                )}
               </DialogTitle>
             </DialogHeader>
             {currentCard && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-                {/* Left: Card Image with Navigation */}
-                <div className="flex flex-col items-center justify-start">
+                {/* Left: Card Image with Printing Selector */}
+                <div className="flex flex-col items-center justify-start gap-4">
                   {hasMultiplePrintings && (
-                    <div className="flex items-center gap-4 mb-4 w-full justify-center">
-                      <Button
-                        onClick={handlePreviousPrinting}
-                        variant="outline"
-                        size="sm"
-                        className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                        Previous
-                      </Button>
-                      <span className="text-white text-sm">
-                        {currentPrintingIndex + 1} / {selectedCardPrintings.length}
-                      </span>
-                      <Button
-                        onClick={handleNextPrinting}
-                        variant="outline"
-                        size="sm"
-                        className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
-                      >
-                        Next
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
+                    <div className="w-full max-w-md">
+                      <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
+                        <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-800 border-slate-700">
+                          {selectedCardPrintings.map((printing) => {
+                            const setCode = getSetCode(printing);
+                            return (
+                              <SelectItem 
+                                key={printing.id} 
+                                value={printing.id}
+                                className="text-white hover:bg-slate-700 focus:bg-slate-700"
+                              >
+                                {setCode} - {printing.rarity}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
                   {currentCard.image_url && (
