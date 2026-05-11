@@ -108,6 +108,10 @@ export default function CollectionPage() {
         collectionService.getCollectionStats(user.id),
       ]);
       
+      console.log("Sets Map size:", sets.size);
+      console.log("Sets Map:", Array.from(sets.entries()).map(([id, set]) => ({ id, code: set.code, name: set.name })));
+      console.log("Collection data sample:", collectionData[0]);
+      
       setCollection(collectionData);
       setStats(statsData);
       
@@ -119,6 +123,9 @@ export default function CollectionPage() {
         
         const cardName = item.card.name;
         const set = sets.get(item.card.set_id);
+        
+        console.log(`Card: ${cardName}, set_id: ${item.card.set_id}, found set:`, set ? { code: set.code, name: set.name } : 'NOT FOUND');
+        
         const setCode = set?.code || "???";
         const setName = set?.name || "Unknown";
         
