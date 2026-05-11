@@ -352,7 +352,36 @@ export default async function handler(
 
       // Add known restricted cards that the API doesn't return
       const knownRestrictedCards = [
+        "Arisanna, Gloriana's Blade",
         "Baby Green Slime",
+        "Blazing Throw",
+        "Blazing Vortex",
+        "Brutal Cleave",
+        "Brutal Reprisal",
+        "Cerulean Decree",
+        "Crux Sight",
+        "Dark Halo",
+        "Decimating Tendrils",
+        "Destructive Shockwave",
+        "Drastic Measure",
+        "Dreaming Seraph",
+        "Erupting Flare Shot",
+        "Fracturize",
+        "Frosted Summit",
+        "Gleaming Thrust",
+        "Grand Archive",
+        "Heinous Smash",
+        "Ignite the Soul",
+        "Kol, Reborn of Adamant",
+        "Savage Swing",
+        "Seance",
+        "Second Chance",
+        "Slash the Limbs",
+        "Slicing Gale",
+        "Sudden Steel",
+        "Surprise Maneuver",
+        "Umbral Sight",
+        "Violent Flare Shot",
       ];
       
       knownRestrictedCards.forEach(name => {

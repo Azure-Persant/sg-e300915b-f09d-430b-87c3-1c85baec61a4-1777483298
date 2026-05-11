@@ -358,22 +358,24 @@ export default function CardsPage() {
                       onClick={() => handleCardClick(card)}
                     >
                       <CardContent className="p-0">
-                        {card.image_url && (
-                          <img
-                            src={card.image_url}
-                            alt={card.name}
-                            className="w-full h-auto group-hover:scale-105 transition-transform duration-200"
-                          />
-                        )}
+                        <div className="relative">
+                          {card.image_url && (
+                            <img
+                              src={card.image_url}
+                              alt={card.name}
+                              className="w-full h-auto group-hover:scale-105 transition-transform duration-200"
+                            />
+                          )}
+                          {hasRestricted && (
+                            <Badge className="absolute top-2 right-2 bg-red-600 text-white text-xs shadow-lg">
+                              Restricted
+                            </Badge>
+                          )}
+                        </div>
                         <div className="p-2">
                           <p className="text-white text-sm font-medium line-clamp-2 leading-tight">
                             {card.name}
                           </p>
-                          {hasRestricted && (
-                            <Badge className="mt-1 bg-red-600 text-white text-xs">
-                              Restricted
-                            </Badge>
-                          )}
                           {printings.length > 1 && (
                             <p className="text-xs text-slate-400 mt-1">
                               {printings.length} printings
