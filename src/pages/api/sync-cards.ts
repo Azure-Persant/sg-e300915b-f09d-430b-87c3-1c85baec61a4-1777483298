@@ -352,7 +352,6 @@ export default async function handler(
 
       // Add known restricted cards that the API doesn't return or to supplement the API list
       const knownRestrictedCards = [
-        // Cards returned by the API
         "Amorphous Missile",
         "Animal Encounter",
         "Beckon Attention",
@@ -369,37 +368,6 @@ export default async function handler(
         "Greater Boon of Detachment",
         "Greater Boon of Dux",
         "Nameless Champion",
-        // Additional known restricted cards (from index.gatcg.com)
-        "Arisanna, Gloriana's Blade",
-        "Baby Green Slime",
-        "Blazing Throw",
-        "Blazing Vortex",
-        "Brutal Cleave",
-        "Brutal Reprisal",
-        "Cerulean Decree",
-        "Crux Sight",
-        "Dark Halo",
-        "Decimating Tendrils",
-        "Destructive Shockwave",
-        "Drastic Measure",
-        "Dreaming Seraph",
-        "Erupting Flare Shot",
-        "Fracturize",
-        "Frosted Summit",
-        "Gleaming Thrust",
-        "Grand Archive",
-        "Heinous Smash",
-        "Ignite the Soul",
-        "Kol, Reborn of Adamant",
-        "Savage Swing",
-        "Seance",
-        "Second Chance",
-        "Slash the Limbs",
-        "Slicing Gale",
-        "Sudden Steel",
-        "Surprise Maneuver",
-        "Umbral Sight",
-        "Violent Flare Shot",
       ];
       
       knownRestrictedCards.forEach(name => {
