@@ -335,75 +335,49 @@ export default async function handler(
     updateProgress({ message: "Updating restricted card status..." });
     
     try {
-      const restrictedUrl = `${API_BASE_URL}/cards/search?legality_format=STANDARD&legality_state=RESTRICTED&limit=1000`;
-      const restrictedResponse = await fetch(restrictedUrl);
-      
       const restrictedNames: string[] = [];
+      let restrictedPage = 1;
+      let hasMoreRestricted = true;
       
-      if (restrictedResponse.ok) {
-        const restrictedData = await restrictedResponse.json();
-        const restrictedCards = restrictedData.data || [];
+      // Fetch all pages of restricted cards
+      while (hasMoreRestricted && restrictedPage <= 10) {
+        const restrictedUrl = `${API_BASE_URL}/cards/search?legality_format=STANDARD&legality_state=RESTRICTED&page=${restrictedPage}&limit=100`;
+        const restrictedResponse = await fetch(restrictedUrl);
         
-        console.log(`  Found ${restrictedCards.length} restricted cards from API`);
-        restrictedNames.push(...restrictedCards.map((card: any) => card.name));
-      } else {
-        console.warn("  ⚠️ Failed to fetch restricted cards from API (non-critical)");
-      }
-
-      // Add known restricted cards that the API doesn't return or to supplement the API list
-      const knownRestrictedCards = [
-        "Altruistic Blacksmith",
-        "Amorphous Missile",
-        "Animal Encounter",
-        "Baby Green Slime",
-        "Beckon Attention",
-        "Bellona's Runestone",
-        "Buoyant Driftguard",
-        "Carpsong Coda",
-        "Charm of Anticipation",
-        "Cheap Sword",
-        "Cheerful Slime",
-        "Clandestine Chart",
-        "Corhazi Outlook",
-        "Covert Manipulator",
-        "Cowl of the Wild",
-        "Crowd's Favor",
-        "Crystal of Empowerment",
-        "Dissonant Fractal",
-        "Duxal Proclamation",
-        "Erupting Rhapsody",
-        "Etherealys' Promise",
-        "Fauna Friend",
-        "Gate of Alterity",
-        "Gem of Sorority",
-        "Gossamer Staff",
-        "Greater Boon of Astraeus",
-        "Greater Boon of Detachment",
-        "Greater Boon of Dux",
-        "Greater Boon of Enki",
-        "Greater Boon of Horses",
-      ];
-      
-      knownRestrictedCards.forEach(name => {
-        if (!restrictedNames.includes(name)) {
-          restrictedNames.push(name);
-          console.log(`  + Added manually: ${name}`);
+        if (restrictedResponse.ok) {
+          const restrictedData = await restrictedResponse.json();
+          const restrictedCards = restrictedData.data || [];
+          
+          console.log(`  Page ${restrictedPage}: ${restrictedCards.length} restricted cards`);
+          restrictedNames.push(...restrictedCards.map((card: any) => card.name));
+          
+          hasMoreRestricted = restrictedData.has_more || false;
+          restrictedPage++;
+          
+          if (hasMoreRestricted) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
+        } else {
+          console.warn(`  ⚠️ Failed to fetch restricted cards page ${restrictedPage}`);
+          break;
         }
-      });
+      }
       
-      console.log(`  Total restricted cards to mark: ${restrictedNames.length}`);
+      // Get unique card names
+      const uniqueRestrictedNames = [...new Set(restrictedNames)];
+      console.log(`  Total: ${restrictedNames.length} printings, ${uniqueRestrictedNames.length} unique restricted cards`);
       
-      if (restrictedNames.length > 0) {
+      if (uniqueRestrictedNames.length > 0) {
         // Update all cards with matching names to set is_restricted = true
         const { error: updateError } = await supabase
           .from("cards")
           .update({ is_restricted: true })
-          .in("name", restrictedNames);
+          .in("name", uniqueRestrictedNames);
         
         if (updateError) {
           console.error("  ⚠️ Error updating restricted status:", updateError);
         } else {
-          console.log(`  ✓ Updated ${restrictedNames.length} card names as restricted`);
+          console.log(`  ✓ Updated ${uniqueRestrictedNames.length} card names as restricted`);
         }
       }
     } catch (restrictedError) {
