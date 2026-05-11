@@ -350,8 +350,26 @@ export default async function handler(
         console.warn("  ⚠️ Failed to fetch restricted cards from API (non-critical)");
       }
 
-      // Add known restricted cards that the API doesn't return
+      // Add known restricted cards that the API doesn't return or to supplement the API list
       const knownRestrictedCards = [
+        // Cards returned by the API
+        "Amorphous Missile",
+        "Animal Encounter",
+        "Beckon Attention",
+        "Bellona's Runestone",
+        "Cheap Sword",
+        "Cheerful Slime",
+        "Clandestine Chart",
+        "Cowl of the Wild",
+        "Crowd's Favor",
+        "Duxal Proclamation",
+        "Etherealys' Promise",
+        "Fauna Friend",
+        "Greater Boon of Astraeus",
+        "Greater Boon of Detachment",
+        "Greater Boon of Dux",
+        "Nameless Champion",
+        // Additional known restricted cards (from index.gatcg.com)
         "Arisanna, Gloriana's Blade",
         "Baby Green Slime",
         "Blazing Throw",
