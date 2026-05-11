@@ -162,7 +162,9 @@ Located in: `src/pages/api/sync-cards.ts`
 7. Creates database entry for EACH edition (same card name can have 5+ different printings)
 8. Deduplicates using `(set_id, card_number, rarity, image_url)` to preserve extended art variants
 9. Upserts cards with proper set_id references
-10. Real-time progress tracking via `/api/sync-progress` endpoint
+10. **Fetches restricted cards separately** (pagination through all 5 pages)
+11. Updates `is_restricted` field for all restricted card names
+12. Real-time progress tracking via `/api/sync-progress` endpoint
 
 **Key Technical Details:**
 - **Deduplication Key:** `${set_id}_${card_number}_${rarity}_${image_url}` 
@@ -172,12 +174,18 @@ Located in: `src/pages/api/sync-cards.ts`
 - **Incremental Sync:** Only fetches new sets if database already populated (saves time)
 - **Progress Tracking:** Real-time updates via polling (1-second interval)
 - **Error Handling:** Comprehensive error logging with sync history tracking
+- **Restricted Card Sync:** 
+  - Separate API call to `/cards/search?legality_format=STANDARD&legality_state=RESTRICTED`
+  - Paginates through all pages (page 1-5, 100 limit per page)
+  - Captures 107 unique restricted card names (121 total printings)
+  - Updates database after card sync completes
 
 **Important Notes:**
 - The `/cards/search?separate_editions=true` API returns each card with ALL its editions in the `editions` array
 - Extended art variants have same set/number/rarity but different image URLs
 - CSR variants have different rarity values (7 = CSR) in the same set
 - Database unique constraint matches deduplication key to prevent overwrites
+- Restricted cards require separate API call because legality data is not available with `separate_editions=true`
 
 **To trigger sync:** 
 - Navigate to `/cards` page
@@ -185,10 +193,11 @@ Located in: `src/pages/api/sync-cards.ts`
 - Click "Full Re-sync" (complete database rebuild - use when needed)
 
 **Sync Stats:**
-- Total Cards Synced: 4,395 card printings (as of 2026-05-10)
+- Total Cards Synced: 4,395 card printings (as of 2026-05-11)
 - Total Sets: 55
+- Restricted Cards: 107 unique card names (121 printings)
 - Sync Duration: ~3-5 minutes (full sync), 10-30 seconds (incremental if no new sets)
-- Last Major Fix: 2026-05-10 - Added image_url to deduplication key to capture extended art variants
+- Last Major Update: 2026-05-11 - Added paginated restricted card sync (captures all 107 restricted cards)
 
 **✅ Confirmed Working Examples:**
 - **Arisanna, Astral Zenith:** All 5 printings captured correctly:
@@ -197,6 +206,8 @@ Located in: `src/pages/api/sync-cards.ts`
   - ALCSD CSR (rarity-based differentiation)
   - RDOPD Common
   - RDOPD-ext Common (image-based differentiation)
+- **Baby Green Slime:** Properly marked as restricted
+- **All 107 restricted cards:** Captured via paginated API calls
 
 **⚠️ Known API Limitation:** While our sync now captures all variants the API returns, the Grand Archive API itself may not expose 100% of printings visible on the official index website. The sync is working correctly - any missing cards are due to upstream API incompleteness.
 
@@ -269,9 +280,20 @@ src/
   - Multiple rarities per set (e.g., ALCSD Common + ALCSD CSR)
   - All promotional printings available in the API
 - **Batched Fetching:** Overcomes Supabase's 1,000 row limit by fetching in batches
-- **Pagination:** 100 cards per page with page number input
+- **Pagination:** 120 cards per page (6 columns on xl screens) with page number input
 - **Search:** Real-time card name search
-- **Card Display:** Image, name, rarity, cost, power/life stats
+- **Card Grouping:** Cards with same name are condensed into one thumbnail
+  - Shows "X printings" count below card name when multiple versions exist
+  - Modal allows cycling through all printings via dropdown selector
+- **Card Display:** 
+  - Thumbnail: Image + name only (minimal design)
+  - Red "Restricted" badge overlays on top-right corner of card image (if restricted)
+  - Hover effect: border color change + slight image scale
+- **Card Detail Modal:**
+  - Left side: Card image at 95% size (5% smaller than default)
+  - Set printing selector dropdown below image (shows "Set Name - Rarity")
+  - Right side: All card details (Name, Rarity, Type, Element, Cost, Effect, Power, Life, Speed, Class, Illustrator)
+  - Element and Type displayed in Title Case (e.g., "Astra" not "ASTRA", "Champion — Cleric Human" not "CHAMPION — CLERIC HUMAN")
 - **Navigation:** Previous/Next, jump to page, First/Last buttons
 - **Database Status:** Shows total cards, sets, and last sync date
 
@@ -282,12 +304,21 @@ src/
 - ✅ Real-time sync progress tracking
 - ✅ Sync history tracking in database
 - ✅ Error handling and recovery
+- ✅ Restricted card tracking with full pagination (107 unique cards, 121 printings)
+
+**Restricted Card Sync:**
+- Fetches restricted cards from `https://api.gatcg.com/cards/search?legality_format=STANDARD&legality_state=RESTRICTED`
+- Properly paginates through all 5 pages of the API endpoint (100 cards per page)
+- Captures all 107 unique restricted card names (121 total printings)
+- Updates database after each sync to mark restricted cards
+- Red "Restricted" badge appears on card thumbnails and in modal header
 
 **Verified Working:**
 - All 5 Arisanna, Astral Zenith printings sync correctly
 - CSR rarity mapping (value 7 → "CSR")
 - Extended art differentiation via image URLs
 - 4,395 total card printings from 55 sets
+- 107 unique restricted cards properly tagged
 
 ### 2. Authentication System
 **Status:** ✅ Complete  
@@ -416,7 +447,7 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 ## 🐛 Known Issues & Limitations
 
 ### 1. Image Loading Performance
-**Issue:** Loading 100 card images per page can be slow on poor connections  
+**Issue:** Loading 120 card images per page can be slow on poor connections  
 **Impact:** Page feels sluggish on initial load  
 **Potential Solutions:**
 - Lazy load images (intersection observer)
@@ -437,6 +468,11 @@ ALTER TABLE collections ADD COLUMN location_id uuid REFERENCES locations(id);
 **Issue:** Extended art cards show same card number as regular versions (e.g., both RDOPD versions show as "006")
 **Impact:** Hard to tell which is extended art without comparing images
 **Potential Solution:** Add `-ext` suffix to card_number or create separate `variant` field in database
+
+### 5. Card Grouping in Search
+**Issue:** When searching for cards, only one printing per unique name is shown
+**Impact:** Users might not realize a card has multiple printings without clicking into the modal
+**Current Workaround:** Modal shows "X printings" count and dropdown selector
 
 ---
 
