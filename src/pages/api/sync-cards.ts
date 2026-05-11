@@ -291,7 +291,6 @@ export default async function handler(
           flavor_text: edition.flavor || card.flavor || null,
           image_url: imageUrl,
           illustrator: edition.illustrator || null,
-          is_restricted: card.legality?.STANDARD?.limit === 0 || false,
         });
       });
     });
@@ -330,6 +329,43 @@ export default async function handler(
     console.log(`   - Pages: ${page - 1}`);
     console.log(`   - Cards synced: ${insertedCount}`);
     console.log(`   - Sets: ${shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size}`);
+
+    // Fetch restricted cards separately (legality data not available with separate_editions=true)
+    console.log(`\n[STEP 3] Fetching restricted cards...`);
+    updateProgress({ message: "Updating restricted card status..." });
+    
+    try {
+      const restrictedUrl = `${API_BASE_URL}/cards/search?legality_format=STANDARD&legality_state=RESTRICTED&limit=1000`;
+      const restrictedResponse = await fetch(restrictedUrl);
+      
+      if (restrictedResponse.ok) {
+        const restrictedData = await restrictedResponse.json();
+        const restrictedCards = restrictedData.data || [];
+        
+        console.log(`  Found ${restrictedCards.length} restricted cards`);
+        
+        if (restrictedCards.length > 0) {
+          // Get restricted card names
+          const restrictedNames = restrictedCards.map((card: any) => card.name);
+          
+          // Update all cards with matching names to set is_restricted = true
+          const { error: updateError } = await supabase
+            .from("cards")
+            .update({ is_restricted: true })
+            .in("name", restrictedNames);
+          
+          if (updateError) {
+            console.error("  ⚠️ Error updating restricted status:", updateError);
+          } else {
+            console.log(`  ✓ Updated ${restrictedNames.length} card names as restricted`);
+          }
+        }
+      } else {
+        console.warn("  ⚠️ Failed to fetch restricted cards (non-critical)");
+      }
+    } catch (restrictedError) {
+      console.warn("  ⚠️ Error fetching restricted cards (non-critical):", restrictedError);
+    }
 
     updateProgress({ 
       isRunning: false,
