@@ -546,7 +546,7 @@ export default function CollectionPage() {
                               value={printing.id}
                               className="text-white hover:bg-slate-700 focus:bg-slate-700"
                             >
-                              {generateSetAcronym(printing.set_name) || "???"} - {printing.rarity}
+                              {generateSetAcronym(getSetName(printing))} - {printing.rarity}
                             </SelectItem>
                           ))}
                         </SelectContent>

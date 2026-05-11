@@ -41,6 +41,17 @@ const toTitleCase = (text: string | null | undefined): string => {
     .join(" ");
 };
 
+// Helper function to generate acronym from set name
+const generateSetAcronym = (setName: string): string => {
+  if (!setName || setName === "Unknown") return "???";
+  
+  const words = setName.split(" ").filter(word => 
+    !["of", "the", "and", "a", "an"].includes(word.toLowerCase())
+  );
+  
+  return words.map(word => word.charAt(0).toUpperCase()).join("") || "???";
+};
+
 export default function CardsPage() {
   const { user } = useAuth();
   const [allCards, setAllCards] = useState<CardType[]>([]);
@@ -521,7 +532,7 @@ export default function CardsPage() {
                                   value={printing.id}
                                   className="text-white hover:bg-slate-700 focus:bg-slate-700"
                                 >
-                                  {setName} - {printing.rarity}
+                                  {generateSetAcronym(setName)} - {printing.rarity}
                                 </SelectItem>
                               );
                             })}
