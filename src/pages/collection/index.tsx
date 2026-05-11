@@ -76,10 +76,16 @@ export default function CollectionPage() {
     if (!authLoading && !user) {
       router.push("/auth/login");
     } else if (user) {
-      loadCollection();
       loadSets();
     }
   }, [user, authLoading]);
+
+  // Load collection after sets are loaded
+  useEffect(() => {
+    if (user && sets.size > 0) {
+      loadCollection();
+    }
+  }, [user, sets]);
 
   const loadSets = async () => {
     try {
