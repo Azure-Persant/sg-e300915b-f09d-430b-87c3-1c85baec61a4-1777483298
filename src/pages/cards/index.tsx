@@ -18,11 +18,15 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, RefreshCw, Database } from "lucide-react";
+import { Search, Loader2, RefreshCw, Database, Plus } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import type { Card as CardType, Set as SetType } from "@/services/cardService";
 import { cardService } from "@/services/cardService";
+import { collectionService } from "@/services/collectionService";
 
 // Helper function to convert text to Title Case
 const toTitleCase = (text: string | null | undefined): string => {
@@ -38,6 +42,7 @@ const toTitleCase = (text: string | null | undefined): string => {
 };
 
 export default function CardsPage() {
+  const { user } = useAuth();
   const [allCards, setAllCards] = useState<CardType[]>([]);
   const [sets, setSets] = useState<Map<string, SetType>>(new Map());
   const [groupedCards, setGroupedCards] = useState<Map<string, CardType[]>>(new Map());
@@ -52,6 +57,9 @@ export default function CardsPage() {
   const [selectedCardPrintings, setSelectedCardPrintings] = useState<CardType[]>([]);
   const [selectedPrintingId, setSelectedPrintingId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [addToCollectionOpen, setAddToCollectionOpen] = useState(false);
+  const [addQuantity, setAddQuantity] = useState(1);
+  const [addLocation, setAddLocation] = useState("");
   const cardsPerPage = 120;
   const { toast } = useToast();
   const router = useRouter();
@@ -224,6 +232,27 @@ export default function CardsPage() {
     setSelectedCardPrintings(printings);
     setSelectedPrintingId(printings[0].id);
     setDialogOpen(true);
+  };
+
+  const handleAddToCollection = async () => {
+    if (!user || !currentCard) return;
+
+    try {
+      await collectionService.addCard(user.id, currentCard.id, addQuantity, addLocation);
+      toast({
+        title: "Added to collection!",
+        description: `${currentCard.name} added successfully`,
+      });
+      setAddToCollectionOpen(false);
+      setAddQuantity(1);
+      setAddLocation("");
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to add card to collection",
+      });
+    }
   };
 
   const currentCard = selectedCardPrintings.find(p => p.id === selectedPrintingId) || selectedCardPrintings[0];
@@ -466,122 +495,184 @@ export default function CardsPage() {
               </DialogTitle>
             </DialogHeader>
             {currentCard && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-                {/* Left: Card Image with Printing Selector Below */}
-                <div className="flex flex-col items-center justify-start gap-4">
-                  {currentCard.image_url && (
-                    <img
-                      src={currentCard.image_url}
-                      alt={currentCard.name}
-                      className="w-[95%] max-w-[380px] rounded-lg shadow-2xl"
-                    />
-                  )}
-                  {hasMultiplePrintings && (
-                    <div className="w-full max-w-md">
-                      <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
-                        <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-800 border-slate-700">
-                          {selectedCardPrintings.map((printing) => {
-                            const setName = getSetName(printing);
-                            return (
-                              <SelectItem 
-                                key={printing.id} 
-                                value={printing.id}
-                                className="text-white hover:bg-slate-700 focus:bg-slate-700"
-                              >
-                                {setName} - {printing.rarity}
-                              </SelectItem>
-                            );
-                          })}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                </div>
-
-                {/* Right: Card Details */}
-                <div className="space-y-4 text-white">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Name</h3>
-                    <p className="text-lg">{currentCard.name}</p>
-                  </div>
-
-                  {currentCard.rarity && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Rarity</h3>
-                      <p className="text-lg">{currentCard.rarity}</p>
-                    </div>
-                  )}
-
-                  {currentCard.card_type && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Type</h3>
-                      <p className="text-lg">{toTitleCase(currentCard.card_type)}</p>
-                    </div>
-                  )}
-
-                  {currentCard.element && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Element</h3>
-                      <p className="text-lg">{toTitleCase(currentCard.element)}</p>
-                    </div>
-                  )}
-
-                  {currentCard.cost !== null && currentCard.cost !== undefined && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Cost</h3>
-                      <p className="text-lg">{currentCard.cost}</p>
-                    </div>
-                  )}
-
-                  {currentCard.effect_text && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Effect</h3>
-                      <p className="text-base leading-relaxed">{currentCard.effect_text}</p>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-3 gap-4">
-                    {currentCard.power !== null && currentCard.power !== undefined && (
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Power</h3>
-                        <p className="text-lg">{currentCard.power}</p>
-                      </div>
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+                  {/* Left: Card Image with Printing Selector Below */}
+                  <div className="flex flex-col items-center justify-start gap-4">
+                    {currentCard.image_url && (
+                      <img
+                        src={currentCard.image_url}
+                        alt={currentCard.name}
+                        className="w-[95%] max-w-[380px] rounded-lg shadow-2xl"
+                      />
                     )}
-
-                    {currentCard.life !== null && currentCard.life !== undefined && (
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Life</h3>
-                        <p className="text-lg">{currentCard.life}</p>
-                      </div>
-                    )}
-
-                    {currentCard.speed !== null && currentCard.speed !== undefined && (
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Speed</h3>
-                        <p className="text-lg">{currentCard.speed}</p>
+                    {hasMultiplePrintings && (
+                      <div className="w-full max-w-md">
+                        <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
+                          <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-800 border-slate-700">
+                            {selectedCardPrintings.map((printing) => {
+                              const setName = getSetName(printing);
+                              return (
+                                <SelectItem 
+                                  key={printing.id} 
+                                  value={printing.id}
+                                  className="text-white hover:bg-slate-700 focus:bg-slate-700"
+                                >
+                                  {setName} - {printing.rarity}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
                       </div>
                     )}
                   </div>
 
-                  {currentCard.class && (
+                  {/* Right: Card Details */}
+                  <div className="space-y-4 text-white">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Class</h3>
-                      <p className="text-lg">{currentCard.class}</p>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Name</h3>
+                      <p className="text-lg">{currentCard.name}</p>
                     </div>
-                  )}
 
-                  {currentCard.illustrator && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Illustrator</h3>
-                      <p className="text-base italic text-slate-300">{currentCard.illustrator}</p>
+                    {currentCard.rarity && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Rarity</h3>
+                        <p className="text-lg">{currentCard.rarity}</p>
+                      </div>
+                    )}
+
+                    {currentCard.card_type && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Type</h3>
+                        <p className="text-lg">{toTitleCase(currentCard.card_type)}</p>
+                      </div>
+                    )}
+
+                    {currentCard.element && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Element</h3>
+                        <p className="text-lg">{toTitleCase(currentCard.element)}</p>
+                      </div>
+                    )}
+
+                    {currentCard.cost !== null && currentCard.cost !== undefined && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Cost</h3>
+                        <p className="text-lg">{currentCard.cost}</p>
+                      </div>
+                    )}
+
+                    {currentCard.effect_text && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Effect</h3>
+                        <p className="text-base leading-relaxed">{currentCard.effect_text}</p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-4">
+                      {currentCard.power !== null && currentCard.power !== undefined && (
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Power</h3>
+                          <p className="text-lg">{currentCard.power}</p>
+                        </div>
+                      )}
+
+                      {currentCard.life !== null && currentCard.life !== undefined && (
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Life</h3>
+                          <p className="text-lg">{currentCard.life}</p>
+                        </div>
+                      )}
+
+                      {currentCard.speed !== null && currentCard.speed !== undefined && (
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Speed</h3>
+                          <p className="text-lg">{currentCard.speed}</p>
+                        </div>
+                      )}
                     </div>
-                  )}
+
+                    {currentCard.class && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Class</h3>
+                        <p className="text-lg">{currentCard.class}</p>
+                      </div>
+                    )}
+
+                    {currentCard.illustrator && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Illustrator</h3>
+                        <p className="text-base italic text-slate-300">{currentCard.illustrator}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+                
+                {user && (
+                  <DialogFooter className="mt-6">
+                    <Button
+                      onClick={() => setAddToCollectionOpen(true)}
+                      className="bg-cyan-500 hover:bg-cyan-600 text-white"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add to Collection
+                    </Button>
+                  </DialogFooter>
+                )}
+              </>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Add to Collection Dialog */}
+        <Dialog open={addToCollectionOpen} onOpenChange={setAddToCollectionOpen}>
+          <DialogContent className="bg-slate-900 border-slate-700">
+            <DialogHeader>
+              <DialogTitle className="text-white">Add to Collection</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label htmlFor="add-quantity" className="text-white">Quantity</Label>
+                <Input
+                  id="add-quantity"
+                  type="number"
+                  min="1"
+                  value={addQuantity}
+                  onChange={(e) => setAddQuantity(parseInt(e.target.value) || 1)}
+                  className="bg-slate-800 border-slate-700 text-white"
+                />
+              </div>
+              <div>
+                <Label htmlFor="add-location" className="text-white">Location (optional)</Label>
+                <Input
+                  id="add-location"
+                  type="text"
+                  placeholder="e.g., Binder 1, Deck Box, Storage"
+                  value={addLocation}
+                  onChange={(e) => setAddLocation(e.target.value)}
+                  className="bg-slate-800 border-slate-700 text-white"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setAddToCollectionOpen(false)}
+                className="border-slate-700 text-white hover:bg-slate-800"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAddToCollection}
+                className="bg-cyan-500 hover:bg-cyan-600 text-white"
+              >
+                Add to Collection
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

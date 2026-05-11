@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-empty-object-type */
+ 
 export type Json =
   | string
   | number
@@ -292,10 +292,8 @@ export type Database = {
         Row: {
           card_id: string
           created_at: string | null
-          foil_quantity: number
           id: string
           location: string | null
-          notes: string | null
           quantity: number
           updated_at: string | null
           user_id: string
@@ -303,10 +301,8 @@ export type Database = {
         Insert: {
           card_id: string
           created_at?: string | null
-          foil_quantity?: number
           id?: string
           location?: string | null
-          notes?: string | null
           quantity?: number
           updated_at?: string | null
           user_id: string
@@ -314,10 +310,8 @@ export type Database = {
         Update: {
           card_id?: string
           created_at?: string | null
-          foil_quantity?: number
           id?: string
           location?: string | null
-          notes?: string | null
           quantity?: number
           updated_at?: string | null
           user_id?: string
@@ -328,20 +322,6 @@ export type Database = {
             columns: ["card_id"]
             isOneToOne: false
             referencedRelation: "cards"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "user_collections_location_id_fkey"
-            columns: ["location"]
-            isOneToOne: false
-            referencedRelation: "card_locations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "user_collections_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
