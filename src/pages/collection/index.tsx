@@ -39,6 +39,21 @@ const toTitleCase = (text: string | null | undefined): string => {
     .join(" ");
 };
 
+// Helper function to generate acronym from set name
+const generateSetAcronym = (setName: string): string => {
+  if (!setName) return "???";
+  
+  // Split by spaces and filter out common words
+  const words = setName.split(" ").filter(word => 
+    !["of", "the", "and", "a", "an"].includes(word.toLowerCase())
+  );
+  
+  // Take first letter of each significant word, uppercase
+  const acronym = words.map(word => word.charAt(0).toUpperCase()).join("");
+  
+  return acronym || "???";
+};
+
 export default function CollectionPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -126,8 +141,8 @@ export default function CollectionPage() {
         
         console.log(`Card: ${cardName}, set_id: ${item.card.set_id}, found set:`, set ? { code: set.code, name: set.name } : 'NOT FOUND');
         
-        const setCode = set?.code || "???";
         const setName = set?.name || "Unknown";
+        const setCode = set ? generateSetAcronym(set.name) : "???";
         
         if (!grouped.has(cardName)) {
           grouped.set(cardName, {
@@ -531,7 +546,7 @@ export default function CollectionPage() {
                               value={printing.id}
                               className="text-white hover:bg-slate-700 focus:bg-slate-700"
                             >
-                              {getSetName(printing)} - {printing.rarity}
+                              {generateSetAcronym(printing.set_name) || "???"} - {printing.rarity}
                             </SelectItem>
                           ))}
                         </SelectContent>
