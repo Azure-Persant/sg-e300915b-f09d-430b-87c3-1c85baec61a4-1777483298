@@ -59,8 +59,6 @@ export default function CardsPage() {
   const [groupedCards, setGroupedCards] = useState<Map<string, CardType[]>>(new Map());
   const [displayCards, setDisplayCards] = useState<CardType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -80,47 +78,6 @@ export default function CardsPage() {
     loadCards();
     loadDbStatus();
   }, [currentPage, searchQuery]);
-
-  // Poll for progress updates while syncing
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (syncing) {
-      interval = setInterval(async () => {
-        try {
-          const response = await fetch("/api/sync-progress");
-          const progress = await response.json();
-          setSyncProgress(progress);
-
-          if (!progress.isRunning) {
-            setSyncing(false);
-            clearInterval(interval);
-            
-            if (progress.error) {
-              toast({
-                title: "Sync failed",
-                description: progress.error,
-                variant: "destructive",
-              });
-            } else {
-              toast({
-                title: "Sync complete!",
-                description: progress.message,
-              });
-              await loadCards();
-              await loadDbStatus();
-            }
-          }
-        } catch (error) {
-          console.error("Progress check error:", error);
-        }
-      }, 1000);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [syncing]);
 
   const loadSets = async () => {
     try {
@@ -188,42 +145,6 @@ export default function CardsPage() {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSync = async (forceFullSync = false) => {
-    setSyncing(true);
-    setSyncProgress({ isRunning: true, message: "Starting sync...", currentPage: 0, totalPages: 0 });
-    
-    try {
-      toast({
-        title: forceFullSync ? "Full sync started" : "Checking for updates...",
-        description: forceFullSync 
-          ? "Re-syncing entire card database. This will take 3-5 minutes."
-          : "Checking for new sets and cards...",
-      });
-
-      fetch("/api/sync-cards", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ forceFullSync }),
-      }).catch((error) => {
-        console.error("Sync request error:", error);
-        setSyncing(false);
-        toast({
-          title: "Sync failed to start",
-          description: error instanceof Error ? error.message : "Unknown error",
-          variant: "destructive",
-        });
-      });
-    } catch (error) {
-      console.error("Sync error:", error);
-      setSyncing(false);
-      toast({
-        title: "Sync failed",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
     }
   };
 
@@ -302,64 +223,11 @@ export default function CardsPage() {
               )}
             </div>
             
-            <div className="flex gap-2">
-              <Button
-                onClick={() => handleSync(false)}
-                disabled={syncing}
-                variant="outline"
-                className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
-              >
-                {syncing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Update Database
-                  </>
-                )}
-              </Button>
-              
-              <Button
-                onClick={() => handleSync(true)}
-                disabled={syncing}
-                variant="ghost"
-                className="text-slate-400 hover:text-white hover:bg-slate-800"
-                title="Force full re-sync (slow)"
-              >
-                Full Re-sync
-              </Button>
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <RefreshCw className="h-4 w-4 text-cyan-400" />
+              Card data updates automatically
             </div>
           </div>
-
-          {syncing && syncProgress && (
-            <div className="mb-6 p-4 bg-slate-800 border border-cyan-500/30 rounded-lg">
-              <div className="flex items-center gap-3 mb-2">
-                <Loader2 className="h-5 w-5 animate-spin text-cyan-400" />
-                <div className="flex-1">
-                  <p className="text-white font-medium">{syncProgress.message}</p>
-                  {syncProgress.totalPages > 0 && (
-                    <p className="text-sm text-slate-400">
-                      Page {syncProgress.currentPage} of ~{syncProgress.totalPages}
-                      {syncProgress.processedCards > 0 && ` • ${syncProgress.processedCards} cards fetched`}
-                    </p>
-                  )}
-                </div>
-              </div>
-              {syncProgress.totalPages > 0 && (
-                <div className="w-full bg-slate-700 rounded-full h-2">
-                  <div
-                    className="bg-cyan-500 h-2 rounded-full transition-all duration-300"
-                    style={{
-                      width: `${Math.min(100, (syncProgress.currentPage / syncProgress.totalPages) * 100)}%`,
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
 
           <div className="mb-6">
             <div className="relative">

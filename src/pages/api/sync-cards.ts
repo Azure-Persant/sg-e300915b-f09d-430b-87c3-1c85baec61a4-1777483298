@@ -1,19 +1,30 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { supabase } from "@/integrations/supabase/client";
+import { supabaseAdmin } from "@/integrations/supabase/server";
 import { updateProgress, resetProgress } from "./sync-progress";
 
 const API_BASE_URL = "https://api.gatcg.com";
+
+export const config = {
+  maxDuration: 300,
+};
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  if (req.method !== "POST") {
+  if (req.method !== "GET" && req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const cronSecret = process.env.CRON_SECRET;
+  const authorization = req.headers.authorization;
+
+  if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
   // Check if force full sync is requested
-  const forceFullSync = req.body?.forceFullSync === true;
+  const forceFullSync = req.method === "POST" && req.body?.forceFullSync === true;
 
   // Helper function to map rarity numbers to names
   const mapRarityNumber = (rarityNum: number): string => {
@@ -33,7 +44,7 @@ export default async function handler(
   console.log("=== SYNC STARTED (SEPARATE EDITIONS MODE) ===");
   
   // Create sync history record
-  const { data: syncRecord, error: syncCreateError } = await supabase
+  const { data: syncRecord, error: syncCreateError } = await supabaseAdmin
     .from("sync_history")
     .insert({
       started_at: new Date().toISOString(),
@@ -58,7 +69,7 @@ export default async function handler(
     let existingSetCodes: string[] = [];
 
     if (!forceFullSync) {
-      const { count: cardCount } = await supabase
+      const { count: cardCount } = await supabaseAdmin
         .from("cards")
         .select("*", { count: "exact", head: true });
 
@@ -66,7 +77,7 @@ export default async function handler(
       if (cardCount && cardCount > 100) {
         shouldDoIncrementalSync = true;
         
-        const { data: existingSets } = await supabase
+        const { data: existingSets } = await supabaseAdmin
           .from("sets")
           .select("code");
         
@@ -172,7 +183,7 @@ export default async function handler(
 
         // Update sync history
         if (syncId) {
-          await supabase
+          await supabaseAdmin
             .from("sync_history")
             .update({
               completed_at: new Date().toISOString(),
@@ -205,7 +216,7 @@ export default async function handler(
       console.log(`  Upserting ${setsArray.length} sets...`);
       updateProgress({ message: `Upserting ${setsArray.length} sets...` });
       
-      const { data: insertedSets, error: setsError } = await supabase
+      const { data: insertedSets, error: setsError } = await supabaseAdmin
         .from("sets")
         .upsert(setsArray, { onConflict: "code" })
         .select("id, code");
@@ -219,7 +230,7 @@ export default async function handler(
     }
 
     // Fetch set IDs
-    const { data: allSets, error: fetchSetsError } = await supabase
+    const { data: allSets, error: fetchSetsError } = await supabaseAdmin
       .from("sets")
       .select("id, code");
 
@@ -313,7 +324,7 @@ export default async function handler(
       
       const deduplicatedCards = Array.from(uniqueCards.values());
 
-      const { error: cardsError } = await supabase
+      const { error: cardsError } = await supabaseAdmin
         .from("cards")
         .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity,image_url" });
 
@@ -369,7 +380,7 @@ export default async function handler(
       
       if (uniqueRestrictedNames.length > 0) {
         // Update all cards with matching names to set is_restricted = true
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from("cards")
           .update({ is_restricted: true })
           .in("name", uniqueRestrictedNames);
@@ -391,7 +402,7 @@ export default async function handler(
 
     // Update sync history
     if (syncId) {
-      await supabase
+      await supabaseAdmin
         .from("sync_history")
         .update({
           completed_at: new Date().toISOString(),
@@ -423,7 +434,7 @@ export default async function handler(
 
     // Update sync history with error
     if (syncId) {
-      await supabase
+      await supabaseAdmin
         .from("sync_history")
         .update({
           completed_at: new Date().toISOString(),
