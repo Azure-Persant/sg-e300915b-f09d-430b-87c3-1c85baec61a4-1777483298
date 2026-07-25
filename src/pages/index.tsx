@@ -1,40 +1,10 @@
 import Link from "next/link";
 import { Navigation } from "@/components/Navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Layers, BookOpen, Sparkles, BarChart3, Database, List, Swords } from "lucide-react";
-import { useState } from "react";
-import { useToast } from "@/hooks/use-toast";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Layers, BookOpen, Sparkles, BarChart3 } from "lucide-react";
 
 export default function HomePage() {
-  const [syncing, setSyncing] = useState(false);
-  const { toast } = useToast();
-
-  const syncCards = async () => {
-    setSyncing(true);
-    try {
-      const response = await fetch("/api/sync-cards", { method: "POST" });
-      const data = await response.json();
-      
-      if (data.success) {
-        toast({
-          title: "Sync Complete!",
-          description: `Synced ${data.synced} cards from ${data.sets} sets.`,
-        });
-      } else {
-        throw new Error(data.details || "Sync failed");
-      }
-    } catch (error) {
-      toast({
-        title: "Sync Failed",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   return (
     <>
       <Navigation />
@@ -116,9 +86,8 @@ export default function HomePage() {
               <Button size="lg" asChild>
                 <Link href="/auth/signup">Get Started Free</Link>
               </Button>
-              <Button size="lg" variant="outline" onClick={syncCards} disabled={syncing}>
-                <Database className="mr-2 h-5 w-5" />
-                {syncing ? "Syncing Cards..." : "Sync Card Database"}
+              <Button size="lg" variant="outline" asChild>
+                <Link href="/cards">Browse Card Database</Link>
               </Button>
             </div>
           </div>

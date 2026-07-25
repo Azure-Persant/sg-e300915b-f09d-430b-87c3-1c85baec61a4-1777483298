@@ -11,21 +11,26 @@ export default async function handler(
 
   try {
     // Get total cards and sets
-    const { count: cardCount } = await supabase
+    const { count: cardCount, error: cardError } = await supabase
       .from("cards")
       .select("*", { count: "exact", head: true });
 
-    const { count: setCount } = await supabase
+    const { count: setCount, error: setError } = await supabase
       .from("sets")
       .select("*", { count: "exact", head: true });
 
     // Get last sync time (we'll track this in a new table)
-    const { data: syncHistory } = await supabase
+    const { data: syncHistory, error: syncHistoryError } = await supabase
       .from("sync_history")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+
+    const queryError = cardError || setError || syncHistoryError;
+    if (queryError) {
+      throw queryError;
+    }
 
     return res.status(200).json({
       totalCards: cardCount || 0,

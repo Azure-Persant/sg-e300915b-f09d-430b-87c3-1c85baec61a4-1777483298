@@ -1,6 +1,17 @@
 {
   "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/sync-cards",
+      "schedule": "0 6 * * *"
+    }
+  ],
   "redirects": [
+    {
+      "source": "/admin/sync",
+      "destination": "/sync",
+      "permanent": false
+    },
     {
       "source": "/old-path",
       "destination": "/new-path",
