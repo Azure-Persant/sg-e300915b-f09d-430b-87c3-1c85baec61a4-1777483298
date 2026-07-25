@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabaseAdmin } from "@/integrations/supabase/server";
-import { getErrorMessage } from "@/lib/errorMessage";
 import { updateProgress, resetProgress } from "./sync-progress";
 
 const API_BASE_URL = "https://api.gatcg.com";
@@ -22,6 +21,10 @@ const splitIntoBatches = <T,>(items: T[], batchSize: number): T[][] => {
   return batches;
 };
 
+export const config = {
+  maxDuration: 300,
+};
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -39,13 +42,6 @@ export default async function handler(
 
   // Check if force full sync is requested
   const forceFullSync = req.method === "POST" && req.body?.forceFullSync === true;
-  const requestedStartPage = Number(req.body?.startPage);
-  const startPage =
-    req.method === "POST" && Number.isInteger(requestedStartPage) && requestedStartPage > 0
-      ? requestedStartPage
-      : 1;
-  const maxPagesThisRequest =
-    req.method === "POST" ? MANUAL_SYNC_PAGES_PER_REQUEST : Number.POSITIVE_INFINITY;
 
   // Helper function to map rarity numbers to names
   const mapRarityNumber = (rarityNum: number): string => {
@@ -99,7 +95,7 @@ export default async function handler(
     let shouldDoIncrementalSync = false;
     let existingSetCodes: string[] = [];
 
-    if (req.method === "GET" && !forceFullSync) {
+    if (!forceFullSync) {
       const { count: cardCount } = await supabaseAdmin
         .from("cards")
         .select("*", { count: "exact", head: true });
@@ -107,7 +103,7 @@ export default async function handler(
       // If we have cards already, do incremental sync
       if (cardCount && cardCount > 100) {
         shouldDoIncrementalSync = true;
-
+        
         const { data: existingSets } = await supabaseAdmin
           .from("sets")
           .select("code");
@@ -258,7 +254,7 @@ export default async function handler(
       const setsArray = Array.from(uniqueSets.values());
       console.log(`  Upserting ${setsArray.length} sets...`);
       updateProgress({ message: `Upserting ${setsArray.length} sets...` });
-
+      
       const { data: insertedSets, error: setsError } = await supabaseAdmin
         .from("sets")
         .upsert(setsArray, { onConflict: "code" })
@@ -370,7 +366,9 @@ export default async function handler(
 
       const deduplicatedCards = Array.from(uniqueCards.values());
 
-      const cardBatches = splitIntoBatches(deduplicatedCards, CARD_UPSERT_BATCH_SIZE);
+      const { error: cardsError } = await supabaseAdmin
+        .from("cards")
+        .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity,image_url" });
 
       for (const [batchIndex, cardBatch] of cardBatches.entries()) {
         assertTimeRemaining();
@@ -434,32 +432,22 @@ export default async function handler(
             break;
           }
         }
-
-        // Get unique card names
-        const uniqueRestrictedNames = [...new Set(restrictedNames)];
-        console.log(`  Total: ${restrictedNames.length} printings, ${uniqueRestrictedNames.length} unique restricted cards`);
-
-        if (uniqueRestrictedNames.length > 0) {
-          const restrictedBatches = splitIntoBatches(
-            uniqueRestrictedNames,
-            RESTRICTED_UPDATE_BATCH_SIZE
-          );
-
-          for (const [batchIndex, restrictedBatch] of restrictedBatches.entries()) {
-            assertTimeRemaining();
-            const { error: updateError } = await supabaseAdmin
-              .from("cards")
-              .update({ is_restricted: true })
-              .in("name", restrictedBatch)
-              .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
-
-            if (updateError) {
-              throw new Error(
-                `Failed to update restricted-card batch ${batchIndex + 1} of ${restrictedBatches.length}: ${getErrorMessage(updateError)}`
-              );
-            }
-          }
-
+      }
+      
+      // Get unique card names
+      const uniqueRestrictedNames = [...new Set(restrictedNames)];
+      console.log(`  Total: ${restrictedNames.length} printings, ${uniqueRestrictedNames.length} unique restricted cards`);
+      
+      if (uniqueRestrictedNames.length > 0) {
+        // Update all cards with matching names to set is_restricted = true
+        const { error: updateError } = await supabaseAdmin
+          .from("cards")
+          .update({ is_restricted: true })
+          .in("name", uniqueRestrictedNames);
+        
+        if (updateError) {
+          console.error("  ⚠️ Error updating restricted status:", updateError);
+        } else {
           console.log(`  ✓ Updated ${uniqueRestrictedNames.length} card names as restricted`);
         }
       } catch (restrictedError) {

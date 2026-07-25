@@ -16,15 +16,12 @@ interface SyncResponse {
   processedInBatch?: number;
   setsProcessed?: number;
   pagesProcessed?: number;
-  stage?: string;
-  nextPage?: number | null;
 }
 
 export default function AdminSyncPage() {
   const [cronSecret, setCronSecret] = useState("");
   const [forceFullSync, setForceFullSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState("");
   const [result, setResult] = useState<SyncResponse | null>(null);
 
   const handleSync = async (event: FormEvent<HTMLFormElement>) => {
@@ -32,58 +29,24 @@ export default function AdminSyncPage() {
     if (!cronSecret) return;
 
     setSyncing(true);
-    setSyncMessage("Starting card sync…");
     setResult(null);
 
     try {
-      let nextPage: number | null = 1;
-      let processedInBatch = 0;
-      let setsProcessed = 0;
-      let pagesProcessed = 0;
+      const response = await fetch("/api/sync-cards", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cronSecret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ forceFullSync }),
+      });
+      const data = (await response.json()) as SyncResponse;
 
-      while (nextPage !== null) {
-        setSyncMessage(`Syncing API pages ${nextPage}–${nextPage + 7}…`);
-        const response = await fetch("/api/sync-cards", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${cronSecret}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ forceFullSync, startPage: nextPage }),
-        });
-        const responseText = await response.text();
-        let data: SyncResponse;
-
-        try {
-          data = responseText ? (JSON.parse(responseText) as SyncResponse) : {};
-        } catch {
-          data = {
-            success: false,
-            error: responseText
-              ? `The server returned an unreadable response (HTTP ${response.status}).`
-              : `The server returned an empty response (HTTP ${response.status}).`,
-          };
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            data.error || `The card sync failed with HTTP ${response.status} ${response.statusText}.`
-          );
-        }
-
-        processedInBatch += data.processedInBatch || 0;
-        setsProcessed += data.setsProcessed || 0;
-        pagesProcessed += data.pagesProcessed || 0;
-        nextPage = data.nextPage ?? null;
+      if (!response.ok) {
+        throw new Error(data.error || "The card sync failed.");
       }
 
-      setResult({
-        success: true,
-        processedInBatch,
-        setsProcessed,
-        pagesProcessed,
-        message: `Processed ${processedInBatch} cards across ${pagesProcessed} API pages.`,
-      });
+      setResult(data);
       setCronSecret("");
     } catch (error) {
       setResult({
@@ -92,7 +55,6 @@ export default function AdminSyncPage() {
       });
     } finally {
       setSyncing(false);
-      setSyncMessage("");
     }
   };
 
@@ -162,7 +124,7 @@ export default function AdminSyncPage() {
                   {syncing ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {syncMessage || "Syncing cards—keep this page open…"}
+                      Syncing cards—keep this page open…
                     </>
                   ) : (
                     <>

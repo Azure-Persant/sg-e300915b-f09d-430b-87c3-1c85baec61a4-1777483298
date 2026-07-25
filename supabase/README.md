@@ -48,11 +48,6 @@ on the deployed site. Enter the same `CRON_SECRET` configured in Vercel and
 select **Start card sync**. Leave **Force a full sync** off for the initial
 import; an empty catalog is populated fully automatically.
 
-The browser runs the import in a sequence of small requests instead of one
-five-minute serverless invocation. Keep the page open until it reports success;
-closing or refreshing it stops the sequence, but already completed batches are
-safe to upsert again when you restart the sync.
-
 The former `/admin/sync` address redirects to `/sync` for compatibility. If
 either address returns 404, confirm that the deployment includes the commit
 that added `src/pages/sync.tsx`; changing a Vercel environment variable does not
