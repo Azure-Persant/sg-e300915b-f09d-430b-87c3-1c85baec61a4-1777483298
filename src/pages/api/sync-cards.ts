@@ -3,6 +3,23 @@ import { supabaseAdmin } from "@/integrations/supabase/server";
 import { updateProgress, resetProgress } from "./sync-progress";
 
 const API_BASE_URL = "https://api.gatcg.com";
+const CARD_UPSERT_BATCH_SIZE = 200;
+const RESTRICTED_UPDATE_BATCH_SIZE = 50;
+const SYNC_DEADLINE_MS = 270_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const MANUAL_SYNC_PAGES_PER_REQUEST = 8;
+
+export const config = {
+  maxDuration: 300,
+};
+
+const splitIntoBatches = <T,>(items: T[], batchSize: number): T[][] => {
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    batches.push(items.slice(index, index + batchSize));
+  }
+  return batches;
+};
 
 export const config = {
   maxDuration: 300,
@@ -42,7 +59,7 @@ export default async function handler(
   };
 
   console.log("=== SYNC STARTED (SEPARATE EDITIONS MODE) ===");
-  
+
   // Create sync history record
   const { data: syncRecord, error: syncCreateError } = await supabaseAdmin
     .from("sync_history")
@@ -58,11 +75,21 @@ export default async function handler(
   }
 
   const syncId = syncRecord?.id;
+  let syncStage = "checking the existing catalog";
+  const syncStartedAt = Date.now();
+
+  const assertTimeRemaining = () => {
+    if (Date.now() - syncStartedAt >= SYNC_DEADLINE_MS) {
+      throw new Error(
+        "The sync stopped before Vercel's five-minute limit. Run it again to retry, or use a smaller synchronization batch."
+      );
+    }
+  };
 
   // Reset progress tracking
   resetProgress();
   updateProgress({ isRunning: true, message: "Starting sync..." });
-  
+
   try {
     // Check if we should do incremental sync
     let shouldDoIncrementalSync = false;
@@ -80,7 +107,7 @@ export default async function handler(
         const { data: existingSets } = await supabaseAdmin
           .from("sets")
           .select("code");
-        
+
         existingSetCodes = existingSets?.map(s => s.code) || [];
         console.log(`Incremental sync mode: ${existingSetCodes.length} sets already in database`);
         updateProgress({ message: `Incremental sync: checking for new sets (${existingSetCodes.length} existing)` });
@@ -89,24 +116,30 @@ export default async function handler(
 
     let allCardsData: any[] = [];
     let hasMore = true;
-    let page = 1;
+    let page = startPage;
+    let pagesFetchedThisRequest = 0;
     const pageSize = 100;
+
+    syncStage = "downloading cards from the Grand Archive API";
 
     // Estimate total pages (API typically has ~40-60 pages)
     updateProgress({ totalPages: 60, message: "Fetching cards from API..." });
 
     // Fetch all cards using pagination with separate_editions=true
     while (hasMore) {
+      assertTimeRemaining();
       const url = `${API_BASE_URL}/cards/search?separate_editions=true&page=${page}&limit=${pageSize}&sort=collector_number`;
-      
+
       console.log(`Fetching page ${page}...`);
-      updateProgress({ 
-        currentPage: page, 
-        message: `Fetching page ${page}...` 
+      updateProgress({
+        currentPage: page,
+        message: `Fetching page ${page}...`
       });
-      
-      const response = await fetch(url);
-      
+
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`API request failed with status ${response.status}:`, errorText);
@@ -115,38 +148,41 @@ export default async function handler(
 
       const data = await response.json();
       const cards = data.data || [];
-      
+
       allCardsData = allCardsData.concat(cards);
       console.log(`  ✓ Page ${page}: ${cards.length} cards (total: ${allCardsData.length})`);
-      updateProgress({ 
+      updateProgress({
         processedCards: allCardsData.length,
-        message: `Fetched ${allCardsData.length} cards from ${page} pages` 
+        message: `Fetched ${allCardsData.length} cards from ${page} pages`
       });
-      
+
       hasMore = data.has_more || false;
-      
+
       // Update total pages estimate based on actual pagination
       if (hasMore && page === 1) {
         const estimatedTotal = Math.ceil((data.total_cards || 5000) / pageSize);
         updateProgress({ totalPages: estimatedTotal });
       }
-      
+
       page++;
-      
-      // Small delay to respect API rate limits
-      if (hasMore) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+      pagesFetchedThisRequest++;
+
+      if (pagesFetchedThisRequest >= maxPagesThisRequest) {
+        break;
       }
+
     }
 
-    console.log(`\n[STEP 1 COMPLETE] Fetched ${allCardsData.length} card editions from ${page - 1} pages`);
-    updateProgress({ 
+    console.log(
+      `\n[STEP 1 COMPLETE] Fetched ${allCardsData.length} card editions from ${pagesFetchedThisRequest} pages`
+    );
+    updateProgress({
       message: `Processing ${allCardsData.length} cards...`,
-      totalPages: page - 1 
+      totalPages: pagesFetchedThisRequest,
     });
 
     console.log(`\n[STEP 2] Processing ${allCardsData.length} card objects...`);
-    
+
     // Extract unique sets - with separate_editions=true, set info is INSIDE editions array
     const uniqueSets = new Map<string, any>();
     allCardsData.forEach((card: any) => {
@@ -173,12 +209,12 @@ export default async function handler(
     if (shouldDoIncrementalSync) {
       const allSetCodes = Array.from(uniqueSets.keys());
       newSetCodes = allSetCodes.filter(code => !existingSetCodes.includes(code));
-      
+
       if (newSetCodes.length === 0) {
         console.log("  ✓ No new sets found - database is up to date!");
-        updateProgress({ 
+        updateProgress({
           isRunning: false,
-          message: "Database is up to date - no new sets to sync" 
+          message: "Database is up to date - no new sets to sync"
         });
 
         // Update sync history
@@ -190,7 +226,7 @@ export default async function handler(
               status: "completed",
               total_cards_processed: 0,
               total_sets_processed: 0,
-              pages_fetched: page - 1,
+              pages_fetched: pagesFetchedThisRequest,
             })
             .eq("id", syncId);
         }
@@ -202,13 +238,16 @@ export default async function handler(
           processedInBatch: 0,
           newSets: 0,
           setsProcessed: 0,
-          pagesProcessed: page - 1,
+          pagesProcessed: pagesFetchedThisRequest,
+          nextPage: null,
         });
       }
 
       console.log(`  Found ${newSetCodes.length} NEW sets to sync:`, newSetCodes);
       updateProgress({ message: `Found ${newSetCodes.length} new sets to sync` });
     }
+
+    syncStage = "saving card sets to Supabase";
 
     // Insert/update sets
     if (uniqueSets.size > 0) {
@@ -229,6 +268,8 @@ export default async function handler(
       console.log(`  ✓ Upserted ${insertedSets?.length || 0} sets`);
     }
 
+    syncStage = "reading saved card sets from Supabase";
+
     // Fetch set IDs
     const { data: allSets, error: fetchSetsError } = await supabaseAdmin
       .from("sets")
@@ -248,11 +289,11 @@ export default async function handler(
     // Process cards - with separate_editions=true, each card object has ALL its editions in the editions[] array
     updateProgress({ message: "Processing card data..." });
     const cardsToInsert: any[] = [];
-    
+
     allCardsData.forEach((card: any) => {
       // Get all editions for this card (result_editions and editions are the same)
       const editions = card.result_editions || card.editions || [];
-      
+
       // Loop through EACH edition and create a separate database entry
       editions.forEach((edition: any) => {
         const setCode = edition.set?.id;
@@ -286,14 +327,14 @@ export default async function handler(
           card_number: edition.collector_number || "UNKNOWN",
           element: card.element || null,
           card_type: typeString || "Unknown",
-          class: Array.isArray(card.classes) && card.classes.length > 0 
-            ? card.classes.join(", ") 
+          class: Array.isArray(card.classes) && card.classes.length > 0
+            ? card.classes.join(", ")
             : null,
-          rarity: typeof edition.rarity === 'number' 
+          rarity: typeof edition.rarity === 'number'
             ? mapRarityNumber(edition.rarity)
             : "UNKNOWN",
-          cost: card.cost_reserve !== null && card.cost_reserve !== undefined 
-            ? card.cost_reserve 
+          cost: card.cost_reserve !== null && card.cost_reserve !== undefined
+            ? card.cost_reserve
             : (card.cost_memory || 0),
           power: card.stats?.ATK !== undefined ? card.stats.ATK : null,
           life: card.stats?.HP !== undefined ? card.stats.HP : null,
@@ -312,6 +353,7 @@ export default async function handler(
     let insertedCount = 0;
 
     if (cardsToInsert.length > 0) {
+      syncStage = "saving card printings to Supabase";
       // Deduplicate - use (set_id, card_number, rarity, image_url) to allow extended art variants
       // Extended art cards have same set/number/rarity but different images
       const uniqueCards = new Map<string, any>();
@@ -321,56 +363,74 @@ export default async function handler(
           uniqueCards.set(key, card);
         }
       });
-      
+
       const deduplicatedCards = Array.from(uniqueCards.values());
 
       const { error: cardsError } = await supabaseAdmin
         .from("cards")
         .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity,image_url" });
 
-      if (cardsError) {
-        console.error("Error inserting cards:", cardsError);
-        throw cardsError;
-      }
+      for (const [batchIndex, cardBatch] of cardBatches.entries()) {
+        assertTimeRemaining();
+        updateProgress({
+          message: `Saving card batch ${batchIndex + 1} of ${cardBatches.length}...`,
+        });
 
-      insertedCount = deduplicatedCards.length;
+        const { error: cardsError } = await supabaseAdmin
+          .from("cards")
+          .upsert(cardBatch, { onConflict: "set_id,card_number,rarity,image_url" })
+          .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
+
+        if (cardsError) {
+          console.error(`Error inserting card batch ${batchIndex + 1}:`, cardsError);
+          throw new Error(
+            `Failed to save card batch ${batchIndex + 1} of ${cardBatches.length}: ${getErrorMessage(cardsError)}`
+          );
+        }
+
+        insertedCount += cardBatch.length;
+      }
     }
 
     console.log(`\n✅ SYNC COMPLETE:`);
-    console.log(`   - Pages: ${page - 1}`);
+    console.log(`   - Pages in this request: ${pagesFetchedThisRequest}`);
     console.log(`   - Cards synced: ${insertedCount}`);
     console.log(`   - Sets: ${shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size}`);
 
     // Fetch restricted cards separately (legality data not available with separate_editions=true)
     console.log(`\n[STEP 3] Fetching restricted cards...`);
     updateProgress({ message: "Updating restricted card status..." });
-    
-    try {
-      const restrictedNames: string[] = [];
-      let restrictedPage = 1;
-      let hasMoreRestricted = true;
-      
-      // Fetch all pages of restricted cards
-      while (hasMoreRestricted && restrictedPage <= 10) {
-        const restrictedUrl = `${API_BASE_URL}/cards/search?legality_format=STANDARD&legality_state=RESTRICTED&page=${restrictedPage}&limit=100`;
-        const restrictedResponse = await fetch(restrictedUrl);
-        
-        if (restrictedResponse.ok) {
-          const restrictedData = await restrictedResponse.json();
-          const restrictedCards = restrictedData.data || [];
-          
-          console.log(`  Page ${restrictedPage}: ${restrictedCards.length} restricted cards`);
-          restrictedNames.push(...restrictedCards.map((card: any) => card.name));
-          
-          hasMoreRestricted = restrictedData.has_more || false;
-          restrictedPage++;
-          
-          if (hasMoreRestricted) {
-            await new Promise(resolve => setTimeout(resolve, 300));
+
+    syncStage = "updating restricted-card status";
+
+    if (!hasMore) {
+      try {
+        const restrictedNames: string[] = [];
+        let restrictedPage = 1;
+        let hasMoreRestricted = true;
+
+        // Fetch all pages of restricted cards
+        while (hasMoreRestricted && restrictedPage <= 10) {
+          assertTimeRemaining();
+          const restrictedUrl = `${API_BASE_URL}/cards/search?legality_format=STANDARD&legality_state=RESTRICTED&page=${restrictedPage}&limit=100`;
+          const restrictedResponse = await fetch(restrictedUrl, {
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          });
+
+          if (restrictedResponse.ok) {
+            const restrictedData = await restrictedResponse.json();
+            const restrictedCards = restrictedData.data || [];
+
+            console.log(`  Page ${restrictedPage}: ${restrictedCards.length} restricted cards`);
+            restrictedNames.push(...restrictedCards.map((card: any) => card.name));
+
+            hasMoreRestricted = restrictedData.has_more || false;
+            restrictedPage++;
+
+          } else {
+            console.warn(`  ⚠️ Failed to fetch restricted cards page ${restrictedPage}`);
+            break;
           }
-        } else {
-          console.warn(`  ⚠️ Failed to fetch restricted cards page ${restrictedPage}`);
-          break;
         }
       }
       
@@ -390,12 +450,12 @@ export default async function handler(
         } else {
           console.log(`  ✓ Updated ${uniqueRestrictedNames.length} card names as restricted`);
         }
+      } catch (restrictedError) {
+        console.warn("  ⚠️ Error fetching restricted cards (non-critical):", restrictedError);
       }
-    } catch (restrictedError) {
-      console.warn("  ⚠️ Error fetching restricted cards (non-critical):", restrictedError);
     }
 
-    updateProgress({ 
+    updateProgress({
       isRunning: false,
       message: `Sync complete! Processed ${insertedCount} cards from ${shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size} sets`
     });
@@ -409,7 +469,7 @@ export default async function handler(
           status: "completed",
           total_cards_processed: insertedCount,
           total_sets_processed: shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size,
-          pages_fetched: page - 1,
+          pages_fetched: pagesFetchedThisRequest,
         })
         .eq("id", syncId);
     }
@@ -420,15 +480,18 @@ export default async function handler(
       processedInBatch: insertedCount,
       newSets: shouldDoIncrementalSync ? newSetCodes.length : uniqueSets.size,
       setsProcessed: uniqueSets.size,
-      pagesProcessed: page - 1,
+      pagesProcessed: pagesFetchedThisRequest,
+      nextPage: hasMore ? page : null,
       incrementalSync: shouldDoIncrementalSync,
     });
   } catch (error) {
-    console.error("Sync error:", error);
-    
-    updateProgress({ 
+    const errorMessage = getErrorMessage(error);
+    const diagnosticMessage = `${syncStage}: ${errorMessage}`;
+    console.error("Sync error:", { stage: syncStage, error });
+
+    updateProgress({
       isRunning: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: diagnosticMessage,
       message: "Sync failed"
     });
 
@@ -439,14 +502,15 @@ export default async function handler(
         .update({
           completed_at: new Date().toISOString(),
           status: "failed",
-          error_message: error instanceof Error ? error.message : "Unknown error",
+          error_message: diagnosticMessage,
         })
         .eq("id", syncId);
     }
 
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: diagnosticMessage,
+      stage: syncStage,
     });
   }
 }
