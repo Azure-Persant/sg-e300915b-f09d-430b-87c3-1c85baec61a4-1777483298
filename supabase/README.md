@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/30478653/README.md)
 # Supabase database setup
 
 `migrations/20260725000000_baseline.sql` is the authoritative baseline for new
