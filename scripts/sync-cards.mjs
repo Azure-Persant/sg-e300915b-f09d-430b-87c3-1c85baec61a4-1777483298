@@ -16,6 +16,8 @@
  *   SUPABASE_SERVICE_ROLE_KEY                    required unless --dry-run
  */
 
+import { appendFileSync } from "node:fs";
+
 import { createClient } from "@supabase/supabase-js";
 
 const API_BASE_URL = "https://api.gatcg.com";
@@ -88,6 +90,33 @@ const batches = (items, size) => {
 };
 
 const log = (...parts) => console.log(`[${new Date().toISOString()}]`, ...parts);
+
+const inGitHubActions = () => process.env.GITHUB_ACTIONS === "true";
+
+/**
+ * Raise the failure reason out of the log body and onto the run page.
+ * Without this the only clue in the UI is "Process completed with exit code 1",
+ * with the actual cause buried among hundreds of log lines.
+ */
+const annotateError = (title, message) => {
+  if (!inGitHubActions()) return;
+  const escaped = String(message)
+    .replace(/%/g, "%25")
+    .replace(/\r/g, "%0D")
+    .replace(/\n/g, "%0A");
+  console.log(`::error title=${title}::${escaped}`);
+};
+
+/** Append markdown to the run's job summary, shown at the top of the run page. */
+const writeSummary = (markdown) => {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (!path) return;
+  try {
+    appendFileSync(path, `${markdown}\n`);
+  } catch {
+    // A summary is a nicety; never let it mask the real outcome.
+  }
+};
 
 // ------------------------------------------------------------------- fetch
 
@@ -467,6 +496,17 @@ async function main() {
         `${pagesFetched} pages, ${sets.size} sets, ${cardsSaved} printings, ${restricted.length} restricted`
     );
 
+    writeSummary(
+      `### ${args.dryRun ? "Dry run complete" : "Sync complete"}\n\n` +
+        `| | |\n|---|---|\n` +
+        `| Pages fetched | ${pagesFetched} |\n` +
+        `| Sets | ${sets.size} |\n` +
+        `| Printings ${args.dryRun ? "parsed" : "saved"} | ${cardsSaved} |\n` +
+        `| Restricted names | ${restricted.length} |\n` +
+        `| Duration | ${elapsed}s |\n` +
+        (args.dryRun ? `\n_Dry run — no database writes were made._\n` : "")
+    );
+
     if (args.dryRun) {
       console.log("\nSample row:\n" + JSON.stringify(rows[0], null, 2));
       const withPower = rows.filter((r) => r.power !== null).length;
@@ -484,6 +524,8 @@ async function main() {
 
     console.error(`\nSYNC FAILED: ${message}`);
     if (error instanceof Error && error.stack) console.error(error.stack);
+    annotateError("Sync failed", message);
+    writeSummary(`### Sync failed\n\n\`\`\`\n${message}\n\`\`\`\n`);
 
     if (supabase && syncId) {
       try {
@@ -507,6 +549,9 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`Fatal: ${errorMessage(error)}`);
+  const message = errorMessage(error);
+  console.error(`Fatal: ${message}`);
+  annotateError("Sync failed before it started", message);
+  writeSummary(`### Sync failed before it started\n\n\`\`\`\n${message}\n\`\`\`\n`);
   process.exitCode = 1;
 });
