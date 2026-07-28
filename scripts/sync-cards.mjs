@@ -281,7 +281,7 @@ function buildCardRows(cards, setCodeToId) {
         cost: card.cost_reserve ?? card.cost_memory ?? 0,
         power: card.power ?? null,
         life: card.life ?? null,
-        speed: card.speed ?? null,
+        speed: typeof card.speed === "boolean" ? (card.speed ? "Fast" : "Slow") : (card.speed ?? null),
         effect_text:
           edition.effect_raw || edition.effect || card.effect_raw || card.effect || null,
         flavor_text: edition.flavor || card.flavor || null,
