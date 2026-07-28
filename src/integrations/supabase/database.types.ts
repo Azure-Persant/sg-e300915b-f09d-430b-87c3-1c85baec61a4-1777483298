@@ -66,7 +66,7 @@ export type Database = {
           power: number | null
           rarity: string
           set_id: string | null
-          speed: number | null
+          speed: string | null
         }
         Insert: {
           card_number: string
@@ -86,7 +86,7 @@ export type Database = {
           power?: number | null
           rarity: string
           set_id?: string | null
-          speed?: number | null
+          speed?: string | null
         }
         Update: {
           card_number?: string
@@ -106,7 +106,7 @@ export type Database = {
           power?: number | null
           rarity?: string
           set_id?: string | null
-          speed?: number | null
+          speed?: string | null
         }
         Relationships: [
           {
