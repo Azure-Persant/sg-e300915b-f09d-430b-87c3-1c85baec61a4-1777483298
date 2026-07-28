@@ -37,10 +37,10 @@ const RARITY_BY_NUMBER = {
   3: "R",    // Rare
   4: "SR",   // Super Rare
   5: "UR",   // Ultra Rare
-  6: "ScR",  // Secret Rare
+  6: "PR",   // Promotional Rare
   7: "CSR",  // Collector's Super Rare
-  8: "CUR",  // Collector's Ultra Rare — all 18 rarity-8 printings carry a "-cur" slug suffix
-  9: "P",    // Promo
+  8: "CUR",  // Collector's Ultra Rare
+  9: "CPR",  // Collector Promo Rare
 };
 
 // ---------------------------------------------------------------- utilities
