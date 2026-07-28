@@ -43,13 +43,21 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Passed as environment variables rather than interpolated into the
+          # script body, so dispatch inputs can never be parsed as shell.
+          DRY_RUN: ${{ inputs.dry_run }}
+          MAX_PAGES: ${{ inputs.max_pages }}
         run: |
-          args=""
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            args="$args --dry-run"
+          set -euo pipefail
+          args=()
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            args+=(--dry-run)
           fi
-          if [ -n "${{ inputs.max_pages }}" ]; then
-            args="$args --max-pages ${{ inputs.max_pages }}"
+          if [ -n "${MAX_PAGES:-}" ]; then
+            case "$MAX_PAGES" in
+              ''|*[!0-9]*) echo "max_pages must be a positive integer" >&2; exit 1 ;;
+            esac
+            args+=(--max-pages "$MAX_PAGES")
           fi
-          echo "Running: node scripts/sync-cards.mjs $args"
-          node scripts/sync-cards.mjs $args
+          echo "Running: node scripts/sync-cards.mjs ${args[*]-}"
+          node scripts/sync-cards.mjs "${args[@]}"
