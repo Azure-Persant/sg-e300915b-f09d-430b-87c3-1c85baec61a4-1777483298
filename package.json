@@ -2,6 +2,9 @@
   "name": "softgen-starter",
   "version": "2.4.4",
   "private": true,
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
