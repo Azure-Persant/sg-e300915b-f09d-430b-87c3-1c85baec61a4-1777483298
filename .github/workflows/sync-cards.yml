@@ -30,14 +30,46 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      # v5 is the first major of both actions to run on node24. On v4 the
+      # runner force-migrates them off the deprecated node20 and emits a
+      # warning on every run.
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          # Runtime for scripts/sync-cards.mjs, independent of the action
+          # runtime above. Node 20 reached end of life in April 2026.
+          node-version: "22"
           cache: npm
 
       - run: npm ci
+
+      - name: Check required secrets
+        # A real sync needs both secrets. Fail here with a named cause rather
+        # than partway into the script, and say so as an annotation so the
+        # reason shows on the run page instead of only in the log body.
+        if: inputs.dry_run != true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${SUPABASE_URL:-}" ] || missing+=(SUPABASE_URL)
+          [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] || missing+=(SUPABASE_SERVICE_ROLE_KEY)
+          if [ ${#missing[@]} -gt 0 ]; then
+            joined="${missing[*]}"
+            echo "::error title=Missing repository secrets::Set these under Settings > Secrets and variables > Actions: ${joined}"
+            {
+              echo "### Missing repository secrets"
+              echo
+              for name in "${missing[@]}"; do echo "- \`${name}\`"; done
+              echo
+              echo "Add them under **Settings > Secrets and variables > Actions**, then re-run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Both required secrets are present."
 
       - name: Run sync
         env:
