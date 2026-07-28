@@ -1,4 +1,3 @@
- 
 export type Json =
   | string
   | number
@@ -229,6 +228,7 @@ export type Database = {
           id: string
           logo_url: string | null
           name: string
+          rank: number
           release_date: string | null
           total_cards: number | null
         }
@@ -238,6 +238,7 @@ export type Database = {
           id?: string
           logo_url?: string | null
           name: string
+          rank?: number
           release_date?: string | null
           total_cards?: number | null
         }
@@ -247,6 +248,7 @@ export type Database = {
           id?: string
           logo_url?: string | null
           name?: string
+          rank?: number
           release_date?: string | null
           total_cards?: number | null
         }
@@ -328,7 +330,38 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      card_catalog: {
+        Row: {
+          card_number: string | null
+          card_type: string | null
+          class: string | null
+          cost: number | null
+          element: string | null
+          id: string | null
+          illustrator: string | null
+          image_url: string | null
+          is_restricted: boolean | null
+          life: number | null
+          name: string | null
+          power: number | null
+          printing_count: number | null
+          rarity: string | null
+          set_code: string | null
+          set_id: string | null
+          set_name: string | null
+          set_rank: number | null
+          speed: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cards_set_id_fkey"
+            columns: ["set_id"]
+            isOneToOne: false
+            referencedRelation: "sets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       [_ in never]: never
