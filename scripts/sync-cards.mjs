@@ -307,7 +307,23 @@ const upsertInBatches = async (supabase, table, rows, size, onConflict, label) =
 
 // -------------------------------------------------------------------- main
 
+/**
+ * Global fetch landed in Node 18 and AbortSignal.timeout in 17.3. On anything
+ * older this fails with a bare "fetch is not defined" that says nothing about
+ * the cause, so check up front.
+ */
+function assertRuntimeSupported() {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (major < 18 || typeof fetch !== "function" || typeof AbortSignal?.timeout !== "function") {
+    throw new Error(
+      `Node 18 or newer is required (running ${process.version}). ` +
+        "This script uses the built-in fetch and AbortSignal.timeout."
+    );
+  }
+}
+
 async function main() {
+  assertRuntimeSupported();
   const args = parseArgs(process.argv.slice(2));
   const startedAt = Date.now();
 
