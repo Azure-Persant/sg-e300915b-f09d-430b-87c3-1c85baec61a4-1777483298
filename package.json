@@ -2,11 +2,16 @@
   "name": "softgen-starter",
   "version": "2.4.4",
   "private": true,
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync": "node scripts/sync-cards.mjs",
+    "sync:dry": "node scripts/sync-cards.mjs --dry-run"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
