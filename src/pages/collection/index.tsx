@@ -39,20 +39,10 @@ const toTitleCase = (text: string | null | undefined): string => {
     .join(" ");
 };
 
-// Helper function to generate acronym from set name
-const generateSetAcronym = (setName: string): string => {
-  if (!setName) return "???";
-  
-  // Split by spaces and filter out common words
-  const words = setName.split(" ").filter(word => 
-    !["of", "the", "and", "a", "an"].includes(word.toLowerCase())
-  );
-  
-  // Take first letter of each significant word, uppercase
-  const acronym = words.map(word => word.charAt(0).toUpperCase()).join("");
-  
-  return acronym || "???";
-};
+// Set codes come from sets.code, which holds the real acronym the API publishes
+// as set.prefix ("MRC", "ALCSD"). This used to build initials from the set name
+// instead, which produced "MH" for Mercurial Heart and "ARSD" for Alchemical
+// Revolution Starter Decks.
 
 export default function CollectionPage() {
   const { user, loading: authLoading } = useAuth();
@@ -138,11 +128,9 @@ export default function CollectionPage() {
         
         const cardName = item.card.name;
         const set = sets.get(item.card.set_id);
-        
-        console.log(`Card: ${cardName}, set_id: ${item.card.set_id}, found set:`, set ? { code: set.code, name: set.name } : 'NOT FOUND');
-        
+
         const setName = set?.name || "Unknown";
-        const setCode = set ? generateSetAcronym(set.name) : "???";
+        const setCode = set?.code || "???";
         
         if (!grouped.has(cardName)) {
           grouped.set(cardName, {
@@ -270,9 +258,9 @@ export default function CollectionPage() {
     }
   };
 
-  const getSetName = (card: CardType): string => {
+  const getSetCode = (card: CardType): string => {
     const set = sets.get(card.set_id);
-    return set?.name || "Unknown";
+    return set?.code || "???";
   };
 
   const filteredCollection = searchQuery
@@ -546,7 +534,7 @@ export default function CollectionPage() {
                               value={printing.id}
                               className="text-white hover:bg-slate-700 focus:bg-slate-700"
                             >
-                              {generateSetAcronym(getSetName(printing))} - {printing.rarity}
+                              {getSetCode(printing)} - {printing.rarity}
                             </SelectItem>
                           ))}
                         </SelectContent>

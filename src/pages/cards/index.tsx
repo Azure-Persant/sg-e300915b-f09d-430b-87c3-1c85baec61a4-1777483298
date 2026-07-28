@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Loader2, RefreshCw, Database, Plus } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import type { Card as CardType, Set as SetType } from "@/services/cardService";
+import type { CardWithSet, CatalogCard } from "@/services/cardService";
 import { cardService } from "@/services/cardService";
 import { collectionService } from "@/services/collectionService";
 
@@ -41,29 +41,21 @@ const toTitleCase = (text: string | null | undefined): string => {
     .join(" ");
 };
 
-// Helper function to generate acronym from set name
-const generateSetAcronym = (setName: string): string => {
-  if (!setName || setName === "Unknown") return "???";
-  
-  const words = setName.split(" ").filter(word => 
-    !["of", "the", "and", "a", "an"].includes(word.toLowerCase())
-  );
-  
-  return words.map(word => word.charAt(0).toUpperCase()).join("") || "???";
-};
+// Set codes come from sets.code, which holds the real acronym the API publishes
+// as set.prefix ("MRC", "ALCSD"). This used to build initials from the set name
+// instead, which produced "MH" for Mercurial Heart and "ARSD" for Alchemical
+// Revolution Starter Decks.
 
 export default function CardsPage() {
   const { user } = useAuth();
-  const [allCards, setAllCards] = useState<CardType[]>([]);
-  const [sets, setSets] = useState<Map<string, SetType>>(new Map());
-  const [groupedCards, setGroupedCards] = useState<Map<string, CardType[]>>(new Map());
-  const [displayCards, setDisplayCards] = useState<CardType[]>([]);
+  const [displayCards, setDisplayCards] = useState<CatalogCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [dbStatus, setDbStatus] = useState<any>(null);
-  const [selectedCardPrintings, setSelectedCardPrintings] = useState<CardType[]>([]);
+  const [selectedCardPrintings, setSelectedCardPrintings] = useState<CardWithSet[]>([]);
   const [selectedPrintingId, setSelectedPrintingId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [addToCollectionOpen, setAddToCollectionOpen] = useState(false);
@@ -73,22 +65,23 @@ export default function CardsPage() {
   const { toast } = useToast();
   const router = useRouter();
 
+  // Keystrokes update the input immediately but only settle into a query after
+  // a pause. Without this, every character triggered a fresh fetch.
   useEffect(() => {
-    loadSets();
-    loadCards();
-    loadDbStatus();
-  }, [currentPage, searchQuery]);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setCurrentPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-  const loadSets = async () => {
-    try {
-      const data = await cardService.getAllSets();
-      const setsMap = new Map<string, SetType>();
-      data.forEach(set => setsMap.set(set.id, set));
-      setSets(setsMap);
-    } catch (error) {
-      console.error("Failed to load sets:", error);
-    }
-  };
+  useEffect(() => {
+    loadCards();
+  }, [currentPage, debouncedSearch]);
+
+  useEffect(() => {
+    loadDbStatus();
+  }, []);
 
   const loadDbStatus = async () => {
     try {
@@ -103,40 +96,17 @@ export default function CardsPage() {
   const loadCards = async () => {
     try {
       setLoading(true);
-      const data = await cardService.getCards();
-      setAllCards(data);
-      
-      // Filter by search
-      const filteredData = searchQuery 
-        ? data.filter((card) => card.name.toLowerCase().includes(searchQuery.toLowerCase()))
-        : data;
-      
-      // Group cards by name
-      const grouped = new Map<string, CardType[]>();
-      filteredData.forEach((card) => {
-        const existing = grouped.get(card.name) || [];
-        existing.push(card);
-        grouped.set(card.name, existing);
+
+      // Postgres does the de-duplication, ranking, filtering and paging; this
+      // fetches one page rather than the whole catalog.
+      const { rows, total } = await cardService.getCatalogPage({
+        page: currentPage,
+        pageSize: cardsPerPage,
+        search: debouncedSearch,
       });
-      setGroupedCards(grouped);
-      
-      // Get one card per unique name for display (prefer one with image, or first one)
-      const uniqueCards = Array.from(grouped.values()).map(printings => {
-        const withImage = printings.find(p => p.image_url);
-        return withImage || printings[0];
-      });
-      
-      // Sort by name
-      uniqueCards.sort((a, b) => a.name.localeCompare(b.name));
-      
-      const total = Math.ceil(uniqueCards.length / cardsPerPage);
-      setTotalPages(total);
-      
-      const startIndex = (currentPage - 1) * cardsPerPage;
-      const endIndex = startIndex + cardsPerPage;
-      const paginatedCards = uniqueCards.slice(startIndex, endIndex);
-      
-      setDisplayCards(paginatedCards);
+
+      setDisplayCards(rows);
+      setTotalPages(Math.max(1, Math.ceil(total / cardsPerPage)));
     } catch (error) {
       toast({
         variant: "destructive",
@@ -150,7 +120,6 @@ export default function CardsPage() {
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    setCurrentPage(1);
   };
 
   const handlePageChange = (newPage: number) => {
@@ -158,12 +127,26 @@ export default function CardsPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCardClick = (card: CardType) => {
-    // Get all printings of this card
-    const printings = groupedCards.get(card.name) || [card];
-    setSelectedCardPrintings(printings);
-    setSelectedPrintingId(printings[0].id);
+  const handleCardClick = async (card: CatalogCard) => {
+    if (!card.name) return;
+
+    // Printings are fetched on demand now. Previously they came from a
+    // client-side map that only existed because the whole catalog was in memory.
     setDialogOpen(true);
+    setSelectedCardPrintings([]);
+    setSelectedPrintingId("");
+
+    try {
+      const printings = await cardService.getPrintingsForName(card.name);
+      setSelectedCardPrintings(printings);
+      setSelectedPrintingId(printings[0]?.id ?? "");
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load printings for this card",
+      });
+    }
   };
 
   const handleAddToCollection = async () => {
@@ -189,12 +172,6 @@ export default function CardsPage() {
 
   const currentCard = selectedCardPrintings.find(p => p.id === selectedPrintingId) || selectedCardPrintings[0];
   const hasMultiplePrintings = selectedCardPrintings.length > 1;
-
-  // Helper to get set name for a card
-  const getSetName = (card: CardType): string => {
-    const set = sets.get(card.set_id);
-    return set?.name || "Unknown";
-  };
 
   return (
     <>
@@ -249,16 +226,19 @@ export default function CardsPage() {
           ) : displayCards.length === 0 ? (
             <div className="text-center py-20">
               <p className="text-slate-400 text-lg">
-                No cards found. Click 'Update Database' to import cards.
+                {debouncedSearch
+                  ? `No cards match "${debouncedSearch}".`
+                  : "No cards yet \u2014 the catalog syncs automatically each day."}
               </p>
             </div>
           ) : (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                 {displayCards.map((card) => {
-                  const printings = groupedCards.get(card.name) || [];
-                  const hasRestricted = printings.some(p => p.is_restricted);
-                  
+                  // The sync flags every printing of a restricted name, so the
+                  // representative row's flag covers the whole card.
+                  const hasRestricted = card.is_restricted ?? false;
+
                   return (
                     <Card
                       key={card.id}
@@ -284,9 +264,9 @@ export default function CardsPage() {
                           <p className="text-white text-sm font-medium line-clamp-2 leading-tight">
                             {card.name}
                           </p>
-                          {printings.length > 1 && (
+                          {(card.printing_count ?? 0) > 1 && (
                             <p className="text-xs text-slate-400 mt-1">
-                              {printings.length} printings
+                              {card.printing_count} printings
                             </p>
                           )}
                         </div>
@@ -392,18 +372,15 @@ export default function CardsPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="bg-slate-800 border-slate-700">
-                            {selectedCardPrintings.map((printing) => {
-                              const setName = getSetName(printing);
-                              return (
-                                <SelectItem 
-                                  key={printing.id} 
-                                  value={printing.id}
-                                  className="text-white hover:bg-slate-700 focus:bg-slate-700"
-                                >
-                                  {generateSetAcronym(setName)} - {printing.rarity}
-                                </SelectItem>
-                              );
-                            })}
+                            {selectedCardPrintings.map((printing) => (
+                              <SelectItem
+                                key={printing.id}
+                                value={printing.id}
+                                className="text-white hover:bg-slate-700 focus:bg-slate-700"
+                              >
+                                {printing.sets?.code ?? "???"} - {printing.rarity}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
