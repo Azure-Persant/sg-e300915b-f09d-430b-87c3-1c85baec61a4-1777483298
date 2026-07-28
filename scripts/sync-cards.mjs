@@ -45,6 +45,28 @@ const RARITY_BY_NUMBER = {
   9: "CPR",  // Collector Promo Rare
 };
 
+// Column types of public.cards, as declared in supabase/migrations. Every row is
+// checked against this before a single batch is upserted — a mismatch here names
+// the offending column and value, instead of surfacing 151 pages later as a bare
+// Postgres 22P02 somewhere inside a 200-row batch. `?` marks a nullable column.
+const CARD_COLUMN_TYPES = {
+  set_id: "string",
+  name: "string",
+  card_number: "string",
+  element: "string?",
+  card_type: "string",
+  class: "string?",
+  rarity: "string",
+  cost: "number",
+  power: "number?",
+  life: "number?",
+  speed: "string?",
+  effect_text: "string?",
+  flavor_text: "string?",
+  image_url: "string?",
+  illustrator: "string?",
+};
+
 // ---------------------------------------------------------------- utilities
 
 const parseArgs = (argv) => {
@@ -90,6 +112,64 @@ const batches = (items, size) => {
 };
 
 const log = (...parts) => console.log(`[${new Date().toISOString()}]`, ...parts);
+
+/**
+ * card.speed is a BOOLEAN in the API payload — true = Fast, false = Slow — which
+ * is why the old integer cards.speed column rejected the first batch outright.
+ * 1,578 of 4,504 printings carry a value; the rest are genuinely absent.
+ */
+const speedLabel = (speed) => {
+  if (speed === null || speed === undefined) return null;
+  if (typeof speed === "boolean") return speed ? "Fast" : "Slow";
+  // Defensive: if the API ever starts sending the label itself, keep it as-is
+  // rather than stringifying something unusable into the column.
+  if (typeof speed === "string") return speed.trim() || null;
+  return String(speed);
+};
+
+/**
+ * Fail before writing anything if a row does not match the table it is bound
+ * for. This is the guard that would have caught `speed: false` against an
+ * integer column immediately, rather than after ~330s of fetching.
+ */
+function assertCardRowsMatchSchema(rows) {
+  const problems = [];
+
+  for (const [index, row] of rows.entries()) {
+    const label = `row ${index} (${row.name ?? "unnamed"} ${row.card_number ?? "?"})`;
+
+    for (const [column, spec] of Object.entries(CARD_COLUMN_TYPES)) {
+      const nullable = spec.endsWith("?");
+      const expected = nullable ? spec.slice(0, -1) : spec;
+      const value = row[column];
+
+      if (value === null || value === undefined) {
+        if (!nullable) problems.push(`${label}: ${column} must not be null`);
+        continue;
+      }
+      if (typeof value !== expected) {
+        problems.push(
+          `${label}: ${column} is ${typeof value} ${JSON.stringify(value)}, expected ${expected}`
+        );
+      }
+    }
+
+    for (const column of Object.keys(row)) {
+      if (!(column in CARD_COLUMN_TYPES)) {
+        problems.push(`${label}: unexpected column ${column}`);
+      }
+    }
+  }
+
+  if (problems.length) {
+    const shown = problems.slice(0, 10).join("\n  ");
+    const rest =
+      problems.length > 10 ? `\n  ...and ${problems.length - 10} more` : "";
+    throw new Error(
+      `${problems.length} card row(s) do not match the public.cards schema:\n  ${shown}${rest}`
+    );
+  }
+}
 
 const inGitHubActions = () => process.env.GITHUB_ACTIONS === "true";
 
@@ -241,9 +321,9 @@ function extractSets(cards) {
 /**
  * Flatten cards into one row per printing.
  *
- * Note on stats: the API exposes power/life/speed at the card level. Earlier
- * code read card.stats.ATK / card.stats.HP, but no `stats` object exists in the
- * payload, so power and life were silently NULL on every row.
+ * Note on stats: the API exposes power/life/speed/durability/level at the card
+ * level. Earlier code read card.stats.ATK / card.stats.HP, but no `stats` object
+ * exists in the payload, so power and life were silently NULL on every row.
  */
 function buildCardRows(cards, setCodeToId) {
   const rows = [];
@@ -281,7 +361,7 @@ function buildCardRows(cards, setCodeToId) {
         cost: card.cost_reserve ?? card.cost_memory ?? 0,
         power: card.power ?? null,
         life: card.life ?? null,
-        speed: typeof card.speed === "boolean" ? (card.speed ? "Fast" : "Slow") : (card.speed ?? null),
+        speed: speedLabel(card.speed),
         effect_text:
           edition.effect_raw || edition.effect || card.effect_raw || card.effect || null,
         flavor_text: edition.flavor || card.flavor || null,
@@ -439,6 +519,12 @@ async function main() {
       log(`Warning: skipped ${skipped.length} printings with no resolvable set, e.g. ${skipped.slice(0, 3).join("; ")}`);
     }
 
+    assertCardRowsMatchSchema(rows);
+    log(
+      `Card rows match the public.cards schema ` +
+        `(${rows.length} rows × ${Object.keys(CARD_COLUMN_TYPES).length} columns)`
+    );
+
     if (supabase) {
       await upsertInBatches(
         supabase, "cards", rows, CARD_UPSERT_BATCH_SIZE, "set_id,card_number,rarity,image_url", "Upserting cards"
@@ -511,11 +597,15 @@ async function main() {
       console.log("\nSample row:\n" + JSON.stringify(rows[0], null, 2));
       const withPower = rows.filter((r) => r.power !== null).length;
       const withLife = rows.filter((r) => r.life !== null).length;
+      const withSpeed = rows.filter((r) => r.speed !== null).length;
       const unknownRarity = rows.filter((r) => r.rarity === "UNKNOWN").length;
       console.log(
         `\nField coverage: power ${withPower}/${rows.length}, ` +
-          `life ${withLife}/${rows.length}, UNKNOWN rarity ${unknownRarity}/${rows.length}`
+          `life ${withLife}/${rows.length}, speed ${withSpeed}/${rows.length}, ` +
+          `UNKNOWN rarity ${unknownRarity}/${rows.length}`
       );
+      const speedValues = [...new Set(rows.map((r) => r.speed))].sort();
+      console.log(`Distinct speed values: ${JSON.stringify(speedValues)}`);
     }
   } catch (error) {
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
