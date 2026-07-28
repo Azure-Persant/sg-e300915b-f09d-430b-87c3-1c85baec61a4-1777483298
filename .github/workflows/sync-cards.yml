@@ -1,0 +1,55 @@
+name: Sync card catalog
+
+# The Grand Archive catalog is ~4,500 printings across ~151 API pages. At ~1.7s
+# per page the fetch loop alone runs past Vercel's 300s function ceiling, so this
+# sync runs here instead of as a Vercel cron.
+
+on:
+  schedule:
+    # 06:00 UTC daily.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Fetch and parse only — make no database writes"
+        type: boolean
+        default: false
+      max_pages:
+        description: "Limit the number of API pages (blank = all)"
+        type: string
+        default: ""
+
+concurrency:
+  # Never let two syncs write the catalog at once.
+  group: sync-cards
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          args=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            args="$args --dry-run"
+          fi
+          if [ -n "${{ inputs.max_pages }}" ]; then
+            args="$args --max-pages ${{ inputs.max_pages }}"
+          fi
+          echo "Running: node scripts/sync-cards.mjs $args"
+          node scripts/sync-cards.mjs $args
