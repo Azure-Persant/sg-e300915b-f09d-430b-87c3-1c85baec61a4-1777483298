@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabaseAdmin } from "@/integrations/supabase/server";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { updateProgress, resetProgress } from "./sync-progress";
 
 const API_BASE_URL = "https://api.gatcg.com";
@@ -8,6 +9,9 @@ const RESTRICTED_UPDATE_BATCH_SIZE = 50;
 const SYNC_DEADLINE_MS = 270_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MANUAL_SYNC_PAGES_PER_REQUEST = 8;
+// A run older than this with status "running" cannot still be alive: it exceeds
+// the 300s maxDuration ceiling by a wide margin.
+const STALE_RUN_TIMEOUT_MS = 600_000;
 
 export const config = {
   maxDuration: 300,
@@ -19,10 +23,6 @@ const splitIntoBatches = <T,>(items: T[], batchSize: number): T[][] => {
     batches.push(items.slice(index, index + batchSize));
   }
   return batches;
-};
-
-export const config = {
-  maxDuration: 300,
 };
 
 export default async function handler(
@@ -42,6 +42,13 @@ export default async function handler(
 
   // Check if force full sync is requested
   const forceFullSync = req.method === "POST" && req.body?.forceFullSync === true;
+  const requestedStartPage = Number(req.body?.startPage);
+  const startPage =
+    req.method === "POST" && Number.isInteger(requestedStartPage) && requestedStartPage > 0
+      ? requestedStartPage
+      : 1;
+  const maxPagesThisRequest =
+    req.method === "POST" ? MANUAL_SYNC_PAGES_PER_REQUEST : Number.POSITIVE_INFINITY;
 
   // Helper function to map rarity numbers to names
   const mapRarityNumber = (rarityNum: number): string => {
@@ -60,6 +67,27 @@ export default async function handler(
 
   console.log("=== SYNC STARTED (SEPARATE EDITIONS MODE) ===");
 
+  // Close out rows abandoned by a previous run. A serverless invocation that is
+  // killed by the platform timeout never reaches its catch block, so its row
+  // stays "running" forever and every later diagnosis is read against stale state.
+  const { data: reaped, error: reapError } = await supabaseAdmin
+    .from("sync_history")
+    .update({
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      error_message:
+        "Abandoned: the serverless invocation ended without reporting a result (most likely the platform execution limit). Marked failed by a later sync.",
+    })
+    .eq("status", "running")
+    .lt("started_at", new Date(Date.now() - STALE_RUN_TIMEOUT_MS).toISOString())
+    .select("id");
+
+  if (reapError) {
+    console.error("Failed to reap stale sync rows:", getErrorMessage(reapError));
+  } else if (reaped?.length) {
+    console.warn(`Marked ${reaped.length} abandoned sync run(s) as failed:`, reaped.map(r => r.id));
+  }
+
   // Create sync history record
   const { data: syncRecord, error: syncCreateError } = await supabaseAdmin
     .from("sync_history")
@@ -71,7 +99,14 @@ export default async function handler(
     .single();
 
   if (syncCreateError) {
-    console.error("Failed to create sync record:", syncCreateError);
+    // Without a row there is no durable record of this run, so say so loudly
+    // rather than silently proceeding into an unobservable sync.
+    console.error("Failed to create sync record:", getErrorMessage(syncCreateError));
+    return res.status(500).json({
+      success: false,
+      error: `Could not open a sync_history record: ${getErrorMessage(syncCreateError)}`,
+      stage: "opening the sync history record",
+    });
   }
 
   const syncId = syncRecord?.id;
@@ -90,12 +125,19 @@ export default async function handler(
   resetProgress();
   updateProgress({ isRunning: true, message: "Starting sync..." });
 
+  // Declared outside the try so the failure path can report how far the run got.
+  // Previously these lived inside the try, so a failed run wrote neither counter
+  // and the columns kept their DB default of 0 — making every failure look like
+  // it died on the very first page.
+  let pagesFetchedThisRequest = 0;
+  let insertedCount = 0;
+
   try {
     // Check if we should do incremental sync
     let shouldDoIncrementalSync = false;
     let existingSetCodes: string[] = [];
 
-    if (!forceFullSync) {
+    if (req.method === "GET" && !forceFullSync) {
       const { count: cardCount } = await supabaseAdmin
         .from("cards")
         .select("*", { count: "exact", head: true });
@@ -103,7 +145,7 @@ export default async function handler(
       // If we have cards already, do incremental sync
       if (cardCount && cardCount > 100) {
         shouldDoIncrementalSync = true;
-        
+
         const { data: existingSets } = await supabaseAdmin
           .from("sets")
           .select("code");
@@ -117,7 +159,6 @@ export default async function handler(
     let allCardsData: any[] = [];
     let hasMore = true;
     let page = startPage;
-    let pagesFetchedThisRequest = 0;
     const pageSize = 100;
 
     syncStage = "downloading cards from the Grand Archive API";
@@ -136,18 +177,45 @@ export default async function handler(
         message: `Fetching page ${page}...`
       });
 
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`API request failed with status ${response.status}:`, errorText);
-        throw new Error(`API request failed: ${response.status}`);
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (fetchError) {
+        // Network failures, DNS errors and AbortSignal timeouts all land here with
+        // messages that name neither the page nor the URL. Attach both.
+        throw new Error(
+          `Could not reach the Grand Archive API on page ${page} (${url}): ${getErrorMessage(fetchError)}`
+        );
       }
 
-      const data = await response.json();
-      const cards = data.data || [];
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "<response body unreadable>");
+        console.error(`API request failed with status ${response.status}:`, errorText);
+        throw new Error(
+          `Grand Archive API returned ${response.status} ${response.statusText} for page ${page} (${url}): ${errorText.slice(0, 500)}`
+        );
+      }
+
+      let data: any;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        throw new Error(
+          `Grand Archive API returned a non-JSON body for page ${page} (${url}): ${getErrorMessage(parseError)}`
+        );
+      }
+
+      if (!Array.isArray(data?.data)) {
+        // Guards against a silent contract change: without this the sync would
+        // treat a reshaped payload as "zero cards" and report success.
+        throw new Error(
+          `Unexpected Grand Archive API response shape on page ${page}: expected "data" to be an array, got ${typeof data?.data}. Top-level keys: ${Object.keys(data ?? {}).join(", ") || "none"}`
+        );
+      }
+
+      const cards = data.data;
 
       allCardsData = allCardsData.concat(cards);
       console.log(`  ✓ Page ${page}: ${cards.length} cards (total: ${allCardsData.length})`);
@@ -254,7 +322,7 @@ export default async function handler(
       const setsArray = Array.from(uniqueSets.values());
       console.log(`  Upserting ${setsArray.length} sets...`);
       updateProgress({ message: `Upserting ${setsArray.length} sets...` });
-      
+
       const { data: insertedSets, error: setsError } = await supabaseAdmin
         .from("sets")
         .upsert(setsArray, { onConflict: "code" })
@@ -350,8 +418,6 @@ export default async function handler(
     console.log(`  Prepared ${cardsToInsert.length} card printings`);
     updateProgress({ message: `Inserting ${cardsToInsert.length} cards into database...` });
 
-    let insertedCount = 0;
-
     if (cardsToInsert.length > 0) {
       syncStage = "saving card printings to Supabase";
       // Deduplicate - use (set_id, card_number, rarity, image_url) to allow extended art variants
@@ -366,9 +432,7 @@ export default async function handler(
 
       const deduplicatedCards = Array.from(uniqueCards.values());
 
-      const { error: cardsError } = await supabaseAdmin
-        .from("cards")
-        .upsert(deduplicatedCards, { onConflict: "set_id,card_number,rarity,image_url" });
+      const cardBatches = splitIntoBatches(deduplicatedCards, CARD_UPSERT_BATCH_SIZE);
 
       for (const [batchIndex, cardBatch] of cardBatches.entries()) {
         assertTimeRemaining();
@@ -432,22 +496,32 @@ export default async function handler(
             break;
           }
         }
-      }
-      
-      // Get unique card names
-      const uniqueRestrictedNames = [...new Set(restrictedNames)];
-      console.log(`  Total: ${restrictedNames.length} printings, ${uniqueRestrictedNames.length} unique restricted cards`);
-      
-      if (uniqueRestrictedNames.length > 0) {
-        // Update all cards with matching names to set is_restricted = true
-        const { error: updateError } = await supabaseAdmin
-          .from("cards")
-          .update({ is_restricted: true })
-          .in("name", uniqueRestrictedNames);
-        
-        if (updateError) {
-          console.error("  ⚠️ Error updating restricted status:", updateError);
-        } else {
+
+        // Get unique card names
+        const uniqueRestrictedNames = [...new Set(restrictedNames)];
+        console.log(`  Total: ${restrictedNames.length} printings, ${uniqueRestrictedNames.length} unique restricted cards`);
+
+        if (uniqueRestrictedNames.length > 0) {
+          const restrictedBatches = splitIntoBatches(
+            uniqueRestrictedNames,
+            RESTRICTED_UPDATE_BATCH_SIZE
+          );
+
+          for (const [batchIndex, restrictedBatch] of restrictedBatches.entries()) {
+            assertTimeRemaining();
+            const { error: updateError } = await supabaseAdmin
+              .from("cards")
+              .update({ is_restricted: true })
+              .in("name", restrictedBatch)
+              .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
+
+            if (updateError) {
+              throw new Error(
+                `Failed to update restricted-card batch ${batchIndex + 1} of ${restrictedBatches.length}: ${getErrorMessage(updateError)}`
+              );
+            }
+          }
+
           console.log(`  ✓ Updated ${uniqueRestrictedNames.length} card names as restricted`);
         }
       } catch (restrictedError) {
@@ -486,8 +560,20 @@ export default async function handler(
     });
   } catch (error) {
     const errorMessage = getErrorMessage(error);
-    const diagnosticMessage = `${syncStage}: ${errorMessage}`;
-    console.error("Sync error:", { stage: syncStage, error });
+    const elapsedSeconds = Math.round((Date.now() - syncStartedAt) / 1000);
+    const diagnosticMessage =
+      `${syncStage}: ${errorMessage} ` +
+      `[after ${elapsedSeconds}s, ${pagesFetchedThisRequest} page(s) fetched, ${insertedCount} card(s) saved]`;
+
+    // Log the raw error too — the stack is the only place the real throw site shows up.
+    console.error("Sync error:", {
+      stage: syncStage,
+      elapsedSeconds,
+      pagesFetchedThisRequest,
+      insertedCount,
+      error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
 
     updateProgress({
       isRunning: false,
@@ -495,22 +581,44 @@ export default async function handler(
       message: "Sync failed"
     });
 
-    // Update sync history with error
+    // Update sync history with error. Record the counters as well: leaving them at
+    // the column default made past failures indistinguishable from "died on page 1".
     if (syncId) {
-      await supabaseAdmin
-        .from("sync_history")
-        .update({
-          completed_at: new Date().toISOString(),
-          status: "failed",
-          error_message: diagnosticMessage,
-        })
-        .eq("id", syncId);
+      try {
+        const { error: historyError } = await supabaseAdmin
+          .from("sync_history")
+          .update({
+            completed_at: new Date().toISOString(),
+            status: "failed",
+            error_message: diagnosticMessage.slice(0, 2000),
+            pages_fetched: pagesFetchedThisRequest,
+            total_cards_processed: insertedCount,
+          })
+          .eq("id", syncId)
+          .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
+
+        if (historyError) {
+          // If this write fails the row stays "running" and the next sync reaps it.
+          console.error(
+            "Failed to record sync failure in sync_history:",
+            getErrorMessage(historyError)
+          );
+        }
+      } catch (historyWriteError) {
+        console.error(
+          "Failed to record sync failure in sync_history:",
+          getErrorMessage(historyWriteError)
+        );
+      }
     }
 
     return res.status(500).json({
       success: false,
       error: diagnosticMessage,
       stage: syncStage,
+      pagesFetched: pagesFetchedThisRequest,
+      cardsSaved: insertedCount,
+      elapsedSeconds,
     });
   }
 }
