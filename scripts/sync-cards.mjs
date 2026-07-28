@@ -301,15 +301,31 @@ async function fetchAllCards({ maxPages, concurrency }) {
 
 // ------------------------------------------------------------------- parse
 
+/**
+ * The set acronym players actually use ("P24"), not the API's opaque slug
+ * ("muw6lmtzwg"). sets.code held the slug until 20260729000000_set_codes_and_
+ * card_catalog.sql remapped it. The slug remains as a fallback so a set that
+ * ever ships without a prefix still syncs instead of dropping its cards.
+ *
+ * This must stay the single source of the key: extractSets uses it to build the
+ * upsert payload and buildCardRows uses it to resolve set_id. If the two ever
+ * disagree, every card silently fails to resolve a set and the catalog empties.
+ */
+const setCodeOf = (set) => {
+  const prefix = typeof set?.prefix === "string" ? set.prefix.trim() : "";
+  return prefix || set?.id || null;
+};
+
 /** Collect the distinct sets referenced by every edition of every card. */
 function extractSets(cards) {
   const sets = new Map();
   for (const card of cards) {
     for (const edition of card.result_editions || card.editions || []) {
       const set = edition?.set;
-      if (!set?.id || sets.has(set.id)) continue;
-      sets.set(set.id, {
-        code: set.id,
+      const code = setCodeOf(set);
+      if (!code || sets.has(code)) continue;
+      sets.set(code, {
+        code,
         name: set.name,
         release_date: set.release_date ? set.release_date.slice(0, 10) : null,
       });
@@ -340,7 +356,7 @@ function buildCardRows(cards, setCodeToId) {
     }
 
     for (const edition of card.result_editions || card.editions || []) {
-      const setCode = edition?.set?.id;
+      const setCode = setCodeOf(edition?.set);
       const setId = setCode ? setCodeToId.get(setCode) : null;
 
       if (!setId) {
