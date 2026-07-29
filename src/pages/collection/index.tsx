@@ -22,10 +22,15 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, Plus, Pencil, Trash2, Package } from "lucide-react";
+import { Search, Loader2, Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { collectionService, type CollectionItem } from "@/services/collectionService";
-import { cardService, type Card as CardType, type Set as SetType } from "@/services/cardService";
+import {
+  cardService,
+  type Card as CardType,
+  type CardWithSet,
+  type Set as SetType,
+} from "@/services/cardService";
 
 // Helper function to convert text to Title Case
 const toTitleCase = (text: string | null | undefined): string => {
@@ -75,7 +80,7 @@ export default function CollectionPage() {
   const [cardDetailOpen, setCardDetailOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
   const [selectedPrintingId, setSelectedPrintingId] = useState<string>("");
-  const [cardPrintings, setCardPrintings] = useState<CardType[]>([]);
+  const [cardPrintings, setCardPrintings] = useState<CardWithSet[]>([]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -112,10 +117,6 @@ export default function CollectionPage() {
         collectionService.getCollection(user.id),
         collectionService.getCollectionStats(user.id),
       ]);
-      
-      console.log("Sets Map size:", sets.size);
-      console.log("Sets Map:", Array.from(sets.entries()).map(([id, set]) => ({ id, code: set.code, name: set.name })));
-      console.log("Collection data sample:", collectionData[0]);
       
       setCollection(collectionData);
       setStats(statsData);
@@ -246,9 +247,9 @@ export default function CollectionPage() {
 
   const handleCardClick = async (card: CardType) => {
     try {
-      // Get all printings of this card
-      const allCards = await cardService.getCards();
-      const printings = allCards.filter(c => c.name === card.name);
+      // Ask for this card's printings rather than downloading the catalog and
+      // filtering by name in the browser, which cost ~3.6 MB to find two rows.
+      const printings = await cardService.getPrintingsForName(card.name);
       setCardPrintings(printings);
       setSelectedCard(card);
       setSelectedPrintingId(card.id);
@@ -269,7 +270,19 @@ export default function CollectionPage() {
       )
     : groupedCollection;
 
-  const currentCard = cardPrintings.find(p => p.id === selectedPrintingId) || selectedCard;
+  const printingIndex = Math.max(
+    0,
+    cardPrintings.findIndex((p) => p.id === selectedPrintingId)
+  );
+  const currentCard = cardPrintings[printingIndex] ?? selectedCard;
+
+  /** Wraps at both ends, so the arrows never dead-end on the first or last printing. */
+  const stepPrinting = (delta: number) => {
+    const count = cardPrintings.length;
+    if (count === 0) return;
+    const next = (printingIndex + delta + count) % count;
+    setSelectedPrintingId(cardPrintings[next].id);
+  };
 
   if (authLoading || !user) {
     return (
@@ -522,23 +535,49 @@ export default function CollectionPage() {
                     />
                   )}
                   {cardPrintings.length > 1 && (
-                    <div className="w-full max-w-md">
-                      <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
-                        <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-800 border-slate-700">
-                          {cardPrintings.map((printing) => (
-                            <SelectItem 
-                              key={printing.id} 
-                              value={printing.id}
-                              className="text-white hover:bg-slate-700 focus:bg-slate-700"
-                            >
-                              {getSetCode(printing)} - {printing.rarity}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    <div className="w-full max-w-md space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          aria-label="Previous printing"
+                          onClick={() => stepPrinting(-1)}
+                          className="shrink-0 bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+
+                        <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
+                          <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-800 border-slate-700">
+                            {cardPrintings.map((printing) => (
+                              <SelectItem
+                                key={printing.id}
+                                value={printing.id}
+                                className="text-white hover:bg-slate-700 focus:bg-slate-700"
+                              >
+                                {printing.sets?.code ?? getSetCode(printing)} - {printing.rarity}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          aria-label="Next printing"
+                          onClick={() => stepPrinting(1)}
+                          className="shrink-0 bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <p className="text-center text-xs text-slate-400">
+                        Printing {printingIndex + 1} of {cardPrintings.length}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -547,6 +586,16 @@ export default function CollectionPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Name</h3>
                     <p className="text-lg">{currentCard.name}</p>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Set</h3>
+                    <p className="text-lg">
+                      {sets.get(currentCard.set_id ?? "")?.name ?? "Unknown"}
+                      <span className="ml-2 text-sm text-slate-400">
+                        ({getSetCode(currentCard)})
+                      </span>
+                    </p>
                   </div>
 
                   {currentCard.rarity && (
