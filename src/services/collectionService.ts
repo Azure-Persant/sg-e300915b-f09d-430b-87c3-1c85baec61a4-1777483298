@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { TablesUpdate } from "@/integrations/supabase/types";
+import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import type { Card } from "./cardService";
 
 export interface CollectionItem {
@@ -234,5 +234,146 @@ export const collectionService = {
       console.error("Error bulk adding cards:", error);
       throw error;
     }
+  },
+};
+// ------------------------------------------------------------------- sharing
+
+export type CollectionShare = Tables<"collection_shares">;
+
+export interface SharedHolding {
+  card_id: string;
+  card_name: string;
+  set_code: string | null;
+  set_name: string | null;
+  rarity: string;
+  image_url: string | null;
+  personal_quantity: number;
+  personal_location: string | null;
+  sale_quantity: number;
+  sale_location: string | null;
+  loaned_quantity: number;
+  loaned_to: string | null;
+}
+
+export interface SharedCollectionMeta {
+  owner_name: string;
+  label: string | null;
+  include_personal: boolean;
+  include_sale: boolean;
+  include_loaned: boolean;
+  expires_at: string | null;
+}
+
+export interface ShareInput {
+  label?: string | null;
+  /** Null or empty creates an open link; an address restricts it to that person. */
+  invitedEmail?: string | null;
+  includePersonal: boolean;
+  includeSale: boolean;
+  includeLoaned: boolean;
+  /** Null means no expiry. */
+  expiresAt?: string | null;
+}
+
+/** Presets offered in the UI. Null is "no expiry", which is a valid choice. */
+export const EXPIRY_PRESETS: Array<{ label: string; hours: number | null }> = [
+  { label: "24 hours", hours: 24 },
+  { label: "7 days", hours: 24 * 7 },
+  { label: "30 days", hours: 24 * 30 },
+  { label: "No expiry", hours: null },
+];
+
+export const expiryFromHours = (hours: number | null): string | null =>
+  hours === null ? null : new Date(Date.now() + hours * 3600_000).toISOString();
+
+export const isShareLive = (share: CollectionShare): boolean =>
+  !share.revoked_at && (!share.expires_at || new Date(share.expires_at) > new Date());
+
+export const shareUrl = (token: string): string =>
+  typeof window === "undefined" ? `/shared/${token}` : `${window.location.origin}/shared/${token}`;
+
+export const collectionShareService = {
+  /** The owner's own shares, newest first. */
+  async list(ownerId: string): Promise<CollectionShare[]> {
+    const { data, error } = await supabase
+      .from("collection_shares")
+      .select("*")
+      .eq("owner_id", ownerId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  /**
+   * Create a share, or re-point an existing invite for the same address.
+   *
+   * The database holds one row per (owner, invited_email), so re-inviting
+   * someone updates their share rather than failing or stacking duplicates.
+   * Open links have a null email and are never merged — an owner may want
+   * several with different scopes and expiries.
+   */
+  async create(ownerId: string, input: ShareInput): Promise<CollectionShare> {
+    const email = input.invitedEmail?.trim().toLowerCase() || null;
+
+    const row = {
+      owner_id: ownerId,
+      label: input.label?.trim() || null,
+      invited_email: email,
+      include_personal: input.includePersonal,
+      include_sale: input.includeSale,
+      include_loaned: input.includeLoaned,
+      expires_at: input.expiresAt ?? null,
+      // Re-inviting someone who was revoked should work rather than stay dead.
+      revoked_at: null,
+    };
+
+    const { data, error } = email
+      ? await supabase
+          .from("collection_shares")
+          .upsert(row, { onConflict: "owner_id,invited_email" })
+          .select()
+          .single()
+      : await supabase.from("collection_shares").insert(row).select().single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /** Revoked rather than deleted, so the row remains as a record of the grant. */
+  async revoke(shareId: string): Promise<void> {
+    const { error } = await supabase
+      .from("collection_shares")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("id", shareId);
+
+    if (error) throw error;
+  },
+
+  async remove(shareId: string): Promise<void> {
+    const { error } = await supabase.from("collection_shares").delete().eq("id", shareId);
+    if (error) throw error;
+  },
+
+  /**
+   * Read a shared collection by token.
+   *
+   * Returns null when the token is unknown, revoked, expired, or restricted to
+   * someone else — the database deliberately does not distinguish those, so a
+   * viewer cannot probe for which tokens exist.
+   */
+  async read(token: string): Promise<{ meta: SharedCollectionMeta; holdings: SharedHolding[] } | null> {
+    const [metaResult, holdingsResult] = await Promise.all([
+      supabase.rpc("shared_collection_meta", { p_token: token }),
+      supabase.rpc("shared_collection", { p_token: token }),
+    ]);
+
+    if (metaResult.error) throw metaResult.error;
+    if (holdingsResult.error) throw holdingsResult.error;
+
+    const meta = (metaResult.data ?? [])[0];
+    if (!meta) return null;
+
+    return { meta, holdings: holdingsResult.data ?? [] };
   },
 };
