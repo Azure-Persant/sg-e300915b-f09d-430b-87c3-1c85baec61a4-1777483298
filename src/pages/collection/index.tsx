@@ -26,9 +26,13 @@ import { useToast } from "@/hooks/use-toast";
 import { Search, Loader2, Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
+  BUCKETS,
+  BUCKET_LABELS,
   collectionService,
-  type CollectionItem,
+  type CollectionBucket,
   type CollectionStats,
+  type Holding,
+  type PlaceInput,
 } from "@/services/collectionService";
 import {
   cardService,
@@ -59,25 +63,26 @@ export default function CollectionPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  const [collection, setCollection] = useState<CollectionItem[]>([]);
+  const [collection, setCollection] = useState<Holding[]>([]);
   const [sets, setSets] = useState<Map<string, SetType>>(new Map());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [stats, setStats] = useState<CollectionStats>({
-    totalCards: 0,
-    totalQuantity: 0,
     uniqueCards: 0,
+    totalQuantity: 0,
+    personalQuantity: 0,
     forSaleQuantity: 0,
     forSaleCards: 0,
     loanedQuantity: 0,
     loanedCards: 0,
+    locations: [],
   });
   
   // Grouped collection by card name with printing details
   interface GroupedCard {
     cardName: string;
     printings: Array<{
-      item: CollectionItem;
+      item: Holding;
       setCode: string;
       setName: string;
     }>;
@@ -88,7 +93,11 @@ export default function CollectionPage() {
   
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedGroupedCard, setSelectedGroupedCard] = useState<GroupedCard | null>(null);
-  const [editPrintings, setEditPrintings] = useState<Array<{ cardId: string; setCode: string; quantity: number; location: string; saleQuantity: number; saleLocation: string; loanedQuantity: number; loanedTo: string }>>([]);
+  // One entry per place, not per printing: a printing can sit in several places.
+  const [editPlaces, setEditPlaces] = useState<
+    Array<{ cardId: string; setCode: string; bucket: CollectionBucket; location: string; quantity: number }>
+  >([]);
+  const [editCardIds, setEditCardIds] = useState<Array<{ cardId: string; setCode: string }>>([]);
   
   const [cardDetailOpen, setCardDetailOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
@@ -161,7 +170,7 @@ export default function CollectionPage() {
           setCode,
           setName,
         });
-        group.totalQuantity += item.quantity;
+        if (item.bucket === 'personal') group.totalQuantity += item.quantity;
       });
       
       setGroupedCollection(Array.from(grouped.values()).sort((a, b) => 
@@ -180,73 +189,70 @@ export default function CollectionPage() {
 
   const handleEditCard = (groupedCard: GroupedCard) => {
     setSelectedGroupedCard(groupedCard);
-    setEditPrintings(groupedCard.printings.map(p => ({
-      cardId: p.item.card_id,
-      setCode: p.setCode,
-      quantity: p.item.quantity,
-      location: p.item.location || "",
-      saleQuantity: p.item.sale_quantity ?? 0,
-      saleLocation: p.item.sale_location || "",
-      loanedQuantity: p.item.loaned_quantity ?? 0,
-      loanedTo: p.item.loaned_to || "",
-    })));
+    setEditCardIds(
+      groupedCard.printings.map((p) => ({ cardId: p.item.card_id, setCode: p.setCode }))
+    );
+    setEditPlaces(
+      groupedCard.printings.map((p) => ({
+        cardId: p.item.card_id,
+        setCode: p.setCode,
+        bucket: p.item.bucket,
+        location: p.item.location,
+        quantity: p.item.quantity,
+      }))
+    );
     setEditDialogOpen(true);
   };
 
-  const handleUpdatePrinting = (
-    cardId: string,
-    field: 'quantity' | 'location' | 'saleQuantity' | 'saleLocation' | 'loanedQuantity' | 'loanedTo',
-    value: string | number
-  ) => {
-    setEditPrintings(prev => prev.map(p => 
-      p.cardId === cardId ? { ...p, [field]: value } : p
-    ));
+  const updatePlace = (index: number, patch: Partial<(typeof editPlaces)[number]>) => {
+    setEditPlaces((prev) => prev.map((place, i) => (i === index ? { ...place, ...patch } : place)));
+  };
+
+  const addPlace = (cardId: string, setCode: string, bucket: CollectionBucket) => {
+    setEditPlaces((prev) => [...prev, { cardId, setCode, bucket, location: "", quantity: 1 }]);
+  };
+
+  const dropPlace = (index: number) => {
+    setEditPlaces((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSaveEdit = async () => {
     if (!user || !selectedGroupedCard) return;
 
-    // user_collections_loan_has_borrower would reject this. Say so in the field's
-    // own terms rather than surfacing a constraint violation.
-    const unnamedLoan = editPrintings.find(
-      (p) => p.loanedQuantity > 0 && !p.loanedTo.trim()
+    // The database rejects a loan with no holder; name the field rather than
+    // surfacing a constraint violation.
+    const unnamed = editPlaces.find(
+      (p) => p.bucket === "loaned" && p.quantity > 0 && !p.location.trim()
     );
-    if (unnamedLoan) {
+    if (unnamed) {
       toast({
         variant: "destructive",
         title: "Who has it?",
-        description: `Enter who the ${unnamedLoan.setCode} copies are lent to, or set the lent quantity back to 0.`,
+        description: `Say who is holding the lent ${unnamed.setCode} copies, or remove that row.`,
       });
       return;
     }
 
     try {
-      // Update each printing
+      // Per printing, because each is its own card_id in the database. A printing
+      // with no places left is removed entirely.
       await Promise.all(
-        editPrintings.map(printing => 
-          collectionService.updateCard(user.id, printing.cardId, {
-            quantity: printing.quantity,
-            location: printing.location,
-            saleQuantity: printing.saleQuantity,
-            saleLocation: printing.saleLocation,
-            loanedQuantity: printing.loanedQuantity,
-            loanedTo: printing.loanedTo,
-          })
-        )
+        editCardIds.map(({ cardId }) => {
+          const places: PlaceInput[] = editPlaces
+            .filter((p) => p.cardId === cardId && p.quantity > 0)
+            .map((p) => ({ bucket: p.bucket, location: p.location, quantity: p.quantity }));
+          return collectionService.setCardHoldings(user.id, cardId, places);
+        })
       );
-      
-      toast({
-        title: "Updated",
-        description: "Card updated successfully",
-      });
-      
+
+      toast({ title: "Updated", description: "Collection updated successfully" });
       setEditDialogOpen(false);
       loadCollection();
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to update card",
+        description: error instanceof Error ? error.message : "Failed to update card",
       });
     }
   };
@@ -261,18 +267,12 @@ export default function CollectionPage() {
         description: "Printing removed from collection",
       });
       
-      // Reload or update local state
-      const updatedPrintings = editPrintings.filter(p => p.cardId !== cardId);
-      
-      if (updatedPrintings.length === 0) {
-        // All printings removed, close dialog and reload
-        setEditDialogOpen(false);
-        loadCollection();
-      } else {
-        // Update local state
-        setEditPrintings(updatedPrintings);
-        loadCollection();
-      }
+      const remaining = editCardIds.filter((p) => p.cardId !== cardId);
+      setEditCardIds(remaining);
+      setEditPlaces((prev) => prev.filter((p) => p.cardId !== cardId));
+
+      if (remaining.length === 0) setEditDialogOpen(false);
+      loadCollection();
     } catch (error) {
       toast({
         variant: "destructive",
@@ -459,37 +459,31 @@ export default function CollectionPage() {
                             Total: <span className="text-white font-medium">{group.totalQuantity}</span>
                           </div>
                           
-                          {/* Quantity per set */}
+                          {/* One line per place, since a printing can sit in
+                              several. Colour carries the bucket. */}
                           <div className="space-y-1">
                             {group.printings.map((printing, idx) => (
                               <div key={idx} className="flex items-center gap-2 text-xs">
                                 <Badge variant="outline" className="border-cyan-500 text-cyan-400 font-mono">
                                   {printing.setCode}
                                 </Badge>
-                                <span className="text-white">{printing.item.quantity}x</span>
+                                <span
+                                  className={
+                                    printing.item.bucket === "sale"
+                                      ? "text-amber-400"
+                                      : printing.item.bucket === "loaned"
+                                        ? "text-violet-400"
+                                        : "text-white"
+                                  }
+                                >
+                                  {printing.item.quantity}x
+                                  {printing.item.bucket === "sale" && " for sale"}
+                                  {printing.item.bucket === "loaned" && " lent"}
+                                </span>
                                 {printing.item.location && (
-                                  <span className="text-slate-400 text-xs">
-                                    ({printing.item.location})
-                                  </span>
-                                )}
-                                {(printing.item.loaned_quantity ?? 0) > 0 && (
-                                  <span className="text-violet-400">
-                                    · {printing.item.loaned_quantity}x lent
-                                    {printing.item.loaned_to && (
-                                      <span className="text-slate-400">
-                                        {" "}to {printing.item.loaned_to}
-                                      </span>
-                                    )}
-                                  </span>
-                                )}
-                                {(printing.item.sale_quantity ?? 0) > 0 && (
-                                  <span className="text-amber-400">
-                                    · {printing.item.sale_quantity}x for sale
-                                    {printing.item.sale_location && (
-                                      <span className="text-slate-400">
-                                        {" "}({printing.item.sale_location})
-                                      </span>
-                                    )}
+                                  <span className="text-slate-400">
+                                    {printing.item.bucket === "loaned" ? "to " : ""}
+                                    {printing.item.location}
                                   </span>
                                 )}
                               </div>
@@ -524,114 +518,111 @@ export default function CollectionPage() {
               <DialogTitle className="text-white">Edit {selectedGroupedCard?.cardName}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
-              {editPrintings.map((printing, idx) => (
-                <div key={printing.cardId} className="p-4 bg-slate-800 rounded-lg space-y-3">
+              {editCardIds.map(({ cardId, setCode }) => (
+                <div key={cardId} className="p-4 bg-slate-800 rounded-lg space-y-3">
                   <div className="flex items-center justify-between">
                     <Badge variant="outline" className="border-cyan-500 text-cyan-400 font-mono text-sm">
-                      {printing.setCode}
+                      {setCode}
                     </Badge>
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => handleRemovePrinting(printing.cardId)}
+                      onClick={() => handleRemovePrinting(cardId)}
                       className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
-                  
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
-                    Personal
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor={`quantity-${idx}`} className="text-white text-sm">Quantity</Label>
-                      <Input
-                        id={`quantity-${idx}`}
-                        type="number"
-                        min="0"
-                        value={printing.quantity}
-                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'quantity', parseInt(e.target.value) || 0)}
-                        className="bg-slate-700 border-slate-600 text-white mt-1"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor={`location-${idx}`} className="text-white text-sm">Location</Label>
-                      <Input
-                        id={`location-${idx}`}
-                        type="text"
-                        placeholder="Optional"
-                        value={printing.location}
-                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'location', e.target.value)}
-                        className="bg-slate-700 border-slate-600 text-white mt-1"
-                      />
-                    </div>
-                  </div>
 
-                  {/* Counted separately from the personal copies above, not
-                      carved out of them, so 3 personal + 2 for sale is 5 held. */}
-                  <p className="text-xs font-semibold text-amber-400/80 uppercase tracking-wide mt-3 mb-1">
-                    For sale / trade
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor={`sale-quantity-${idx}`} className="text-white text-sm">Quantity</Label>
-                      <Input
-                        id={`sale-quantity-${idx}`}
-                        type="number"
-                        min="0"
-                        value={printing.saleQuantity}
-                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'saleQuantity', parseInt(e.target.value) || 0)}
-                        className="bg-slate-700 border-slate-600 text-white mt-1"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor={`sale-location-${idx}`} className="text-white text-sm">Location</Label>
-                      <Input
-                        id={`sale-location-${idx}`}
-                        type="text"
-                        placeholder="Optional"
-                        value={printing.saleLocation}
-                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'saleLocation', e.target.value)}
-                        className="bg-slate-700 border-slate-600 text-white mt-1"
-                      />
-                    </div>
-                  </div>
+                  {BUCKETS.map((bucket) => {
+                    // Indices into editPlaces, so edits address the right row even
+                    // though the list is filtered per printing and bucket.
+                    const rows = editPlaces
+                      .map((place, index) => ({ place, index }))
+                      .filter(({ place }) => place.cardId === cardId && place.bucket === bucket);
 
-                  {/* The borrower's name is required by the database whenever the
-                      quantity is above 0 — a loan you cannot trace is not useful.
-                      Setting the quantity back to 0 clears the name. */}
-                  <p className="text-xs font-semibold text-violet-400/80 uppercase tracking-wide mt-3 mb-1">
-                    Lent out
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor={`loaned-quantity-${idx}`} className="text-white text-sm">Quantity</Label>
-                      <Input
-                        id={`loaned-quantity-${idx}`}
-                        type="number"
-                        min="0"
-                        value={printing.loanedQuantity}
-                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'loanedQuantity', parseInt(e.target.value) || 0)}
-                        className="bg-slate-700 border-slate-600 text-white mt-1"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor={`loaned-to-${idx}`} className="text-white text-sm">
-                        Lent to {printing.loanedQuantity > 0 && <span className="text-violet-400">*</span>}
-                      </Label>
-                      <Input
-                        id={`loaned-to-${idx}`}
-                        type="text"
-                        placeholder={printing.loanedQuantity > 0 ? "Required" : "Optional"}
-                        value={printing.loanedTo}
-                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'loanedTo', e.target.value)}
-                        className="bg-slate-700 border-slate-600 text-white mt-1"
-                      />
-                    </div>
-                  </div>
+                    return (
+                      <div key={bucket} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p
+                            className={`text-xs font-semibold uppercase tracking-wide ${
+                              bucket === "sale"
+                                ? "text-amber-400/80"
+                                : bucket === "loaned"
+                                  ? "text-violet-400/80"
+                                  : "text-slate-400"
+                            }`}
+                          >
+                            {BUCKET_LABELS[bucket]}
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => addPlace(cardId, setCode, bucket)}
+                            className="h-7 text-slate-300 hover:text-white"
+                          >
+                            <Plus className="mr-1 h-3 w-3" />
+                            Add place
+                          </Button>
+                        </div>
+
+                        {rows.length === 0 ? (
+                          <p className="text-xs text-slate-500">None</p>
+                        ) : (
+                          rows.map(({ place, index }) => (
+                            <div key={index} className="flex items-end gap-2">
+                              <div className="w-24">
+                                <Label className="text-white text-xs">Qty</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={place.quantity}
+                                  onChange={(e) =>
+                                    updatePlace(index, { quantity: parseInt(e.target.value) || 0 })
+                                  }
+                                  className="bg-slate-700 border-slate-600 text-white mt-1"
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <Label className="text-white text-xs">
+                                  {bucket === "loaned" ? "Lent to" : "Location"}
+                                  {bucket === "loaned" && <span className="text-violet-400"> *</span>}
+                                </Label>
+                                <Input
+                                  type="text"
+                                  list="collection-locations"
+                                  placeholder={
+                                    bucket === "loaned" ? "Who has it" : "Box 1, Binder A..."
+                                  }
+                                  value={place.location}
+                                  onChange={(e) => updatePlace(index, { location: e.target.value })}
+                                  className="bg-slate-700 border-slate-600 text-white mt-1"
+                                />
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => dropPlace(index)}
+                                className="text-slate-400 hover:text-red-300"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
+
+              {/* Place names already in use, so the same box is spelled the same
+                  way each time rather than becoming two places. */}
+              <datalist id="collection-locations">
+                {stats.locations.map((location) => (
+                  <option key={location} value={location} />
+                ))}
+              </datalist>
             </div>
             <DialogFooter>
               <Button
