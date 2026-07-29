@@ -51,7 +51,10 @@ export type Database = {
           card_number: string
           card_type: string
           class: string | null
+          classes: string[]
           cost: number | null
+          cost_memory: number | null
+          cost_reserve: number | null
           created_at: string | null
           effect_text: string | null
           element: string | null
@@ -66,12 +69,17 @@ export type Database = {
           rarity: string
           set_id: string | null
           speed: string | null
+          subtypes: string[]
+          types: string[]
         }
         Insert: {
           card_number: string
           card_type: string
           class?: string | null
+          classes?: string[]
           cost?: number | null
+          cost_memory?: number | null
+          cost_reserve?: number | null
           created_at?: string | null
           effect_text?: string | null
           element?: string | null
@@ -86,12 +94,17 @@ export type Database = {
           rarity: string
           set_id?: string | null
           speed?: string | null
+          subtypes?: string[]
+          types?: string[]
         }
         Update: {
           card_number?: string
           card_type?: string
           class?: string | null
+          classes?: string[]
           cost?: number | null
+          cost_memory?: number | null
+          cost_reserve?: number | null
           created_at?: string | null
           effect_text?: string | null
           element?: string | null
@@ -106,6 +119,8 @@ export type Database = {
           rarity?: string
           set_id?: string | null
           speed?: string | null
+          subtypes?: string[]
+          types?: string[]
         }
         Relationships: [
           {
@@ -330,12 +345,24 @@ export type Database = {
       }
     }
     Views: {
+      card_filter_options: {
+        Row: {
+          card_count: number | null
+          kind: string | null
+          value: string | null
+        }
+        Relationships: []
+      }
       card_catalog: {
         Row: {
           card_number: string | null
           card_type: string | null
           class: string | null
+          classes: string[] | null
           cost: number | null
+          cost_memory: number | null
+          cost_reserve: number | null
+          effect_text: string | null
           element: string | null
           id: string | null
           illustrator: string | null
@@ -347,10 +374,13 @@ export type Database = {
           printing_count: number | null
           rarity: string | null
           set_code: string | null
+          set_codes: string[] | null
           set_id: string | null
           set_name: string | null
           set_rank: number | null
           speed: string | null
+          subtypes: string[] | null
+          types: string[] | null
         }
         Relationships: [
           {
