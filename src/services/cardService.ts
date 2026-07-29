@@ -303,7 +303,7 @@ export const cardService = {
       .select(`
         *,
         sets(*),
-        user_collections!inner(user_id, quantity, location)
+        user_collections!inner(user_id, bucket, location, quantity)
       `)
       .eq("user_collections.user_id", userId)
       .order("name", { ascending: true });
@@ -341,14 +341,20 @@ export const cardService = {
       return;
     }
 
+    // Copies are held per place now, so a plain total needs a place to sit in;
+    // the personal bucket with no location is the neutral default.
     const { data, error } = await supabase
       .from("user_collections")
-      .upsert({
-        user_id: userId,
-        card_id: cardId,
-        quantity,
-        location: location || null,
-      })
+      .upsert(
+        {
+          user_id: userId,
+          card_id: cardId,
+          bucket: "personal",
+          location: location ?? "",
+          quantity,
+        },
+        { onConflict: "user_id,card_id,bucket,location" }
+      )
       .select()
       .single();
 
@@ -359,13 +365,15 @@ export const cardService = {
   async getCollectionStats(userId: string) {
     const { data, error } = await supabase
       .from("user_collections")
-      .select("quantity")
+      .select("card_id, quantity")
       .eq("user_id", userId);
 
     if (error) throw error;
 
-    const totalCards = (data || []).reduce((sum, item) => sum + (item.quantity || 0), 0);
-    const uniqueCards = (data || []).length;
+    const rows = data || [];
+    const totalCards = rows.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    // Distinct cards, not rows: one card can sit in several places now.
+    const uniqueCards = new Set(rows.map((item) => item.card_id)).size;
 
     return { totalCards, uniqueCards };
   },
