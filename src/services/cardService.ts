@@ -8,6 +8,57 @@ export type UserCollection = Tables<"user_collections">;
 /** One row per card name — see public.card_catalog. */
 export type CatalogCard = ViewRows<"card_catalog">;
 
+/** A distinct element/type/subtype/class value with its card count. */
+export type FilterOption = { value: string; count: number };
+
+export type FilterOptions = {
+  elements: FilterOption[];
+  types: FilterOption[];
+  subtypes: FilterOption[];
+  classes: FilterOption[];
+};
+
+export type CardFilters = {
+  /** Card name, substring match. */
+  search?: string;
+  /** Effect text, substring match — "ban" matches "Banish". */
+  effectSearch?: string;
+  elements?: string[];
+  /** Set codes. Matches cards with any printing in these sets. */
+  setCodes?: string[];
+  types?: string[];
+  subtypes?: string[];
+  classes?: string[];
+  costMemoryMin?: number | null;
+  costMemoryMax?: number | null;
+  costReserveMin?: number | null;
+  costReserveMax?: number | null;
+};
+
+export const EMPTY_FILTERS: CardFilters = {
+  search: "",
+  effectSearch: "",
+  elements: [],
+  setCodes: [],
+  types: [],
+  subtypes: [],
+  classes: [],
+  costMemoryMin: null,
+  costMemoryMax: null,
+  costReserveMin: null,
+  costReserveMax: null,
+};
+
+export const countActiveFilters = (filters: CardFilters): number =>
+  (filters.elements?.length ? 1 : 0) +
+  (filters.setCodes?.length ? 1 : 0) +
+  (filters.types?.length ? 1 : 0) +
+  (filters.subtypes?.length ? 1 : 0) +
+  (filters.classes?.length ? 1 : 0) +
+  (filters.effectSearch?.trim() ? 1 : 0) +
+  (filters.costMemoryMin != null || filters.costMemoryMax != null ? 1 : 0) +
+  (filters.costReserveMin != null || filters.costReserveMax != null ? 1 : 0);
+
 // Only the columns the grid actually renders. effect_text and flavor_text are
 // the bulk of a row and are not shown on a tile, so they are fetched later by
 // getPrintingsForName when a card's dialog opens.
@@ -113,9 +164,10 @@ export const cardService = {
   async getCatalogPage(options: {
     page: number;
     pageSize: number;
-    search?: string;
+    filters?: CardFilters;
   }) {
     const from = (options.page - 1) * options.pageSize;
+    const f = options.filters ?? {};
 
     let query = supabase
       .from("card_catalog")
@@ -123,15 +175,69 @@ export const cardService = {
       .order("name", { ascending: true })
       .range(from, from + options.pageSize - 1);
 
-    const search = options.search?.trim();
-    if (search) {
-      query = query.ilike("name", `%${search}%`);
-    }
+    const search = f.search?.trim();
+    if (search) query = query.ilike("name", `%${search}%`);
+
+    const effect = f.effectSearch?.trim();
+    if (effect) query = query.ilike("effect_text", `%${effect}%`);
+
+    // element is single-valued, so membership rather than overlap.
+    if (f.elements?.length) query = query.in("element", f.elements);
+
+    // The array filters are OR within a control and AND across controls: picking
+    // FIRE + WATER widens, adding a class narrows.
+    if (f.types?.length) query = query.overlaps("types", f.types);
+    if (f.subtypes?.length) query = query.overlaps("subtypes", f.subtypes);
+    if (f.classes?.length) query = query.overlaps("classes", f.classes);
+
+    // set_codes holds every set a card appears in, so this means "available in
+    // these sets" — the tile still shows the best-ranked printing's art.
+    if (f.setCodes?.length) query = query.overlaps("set_codes", f.setCodes);
+
+    if (f.costMemoryMin != null) query = query.gte("cost_memory", f.costMemoryMin);
+    if (f.costMemoryMax != null) query = query.lte("cost_memory", f.costMemoryMax);
+    if (f.costReserveMin != null) query = query.gte("cost_reserve", f.costReserveMin);
+    if (f.costReserveMax != null) query = query.lte("cost_reserve", f.costReserveMax);
 
     const { data, error, count } = await query;
     if (error) throw error;
 
     return { rows: (data ?? []) as CatalogCard[], total: count ?? 0 };
+  },
+
+  /**
+   * Every dropdown's options in one request, with card counts, from
+   * public.card_filter_options. Sets come from getAllSets separately because
+   * they carry a name and rank the filter list wants to show.
+   */
+  async getFilterOptions(): Promise<FilterOptions> {
+    const { data, error } = await supabase
+      .from("card_filter_options")
+      .select("kind, value, card_count");
+
+    if (error) throw error;
+
+    const buckets: FilterOptions = { elements: [], types: [], subtypes: [], classes: [] };
+    const target = {
+      element: buckets.elements,
+      type: buckets.types,
+      subtype: buckets.subtypes,
+      class: buckets.classes,
+    } as const;
+
+    for (const row of data ?? []) {
+      const bucket = target[row.kind as keyof typeof target];
+      if (!bucket || !row.value) continue;
+      bucket.push({ value: row.value, count: row.card_count ?? 0 });
+    }
+
+    // Alphabetical: these lists are browsed, not ranked, and 146 subtypes need a
+    // predictable order to scan.
+    for (const bucket of Object.values(buckets)) {
+      bucket.sort((a, b) => a.value.localeCompare(b.value));
+    }
+
+    return buckets;
   },
 
   /**
