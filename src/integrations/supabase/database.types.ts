@@ -311,7 +311,12 @@ export type Database = {
           created_at: string | null
           id: string
           location: string | null
+          loaned_quantity: number
+          loaned_to: string | null
+          loaned_to_user_id: string | null
           quantity: number
+          sale_location: string | null
+          sale_quantity: number
           updated_at: string | null
           user_id: string
         }
@@ -320,7 +325,12 @@ export type Database = {
           created_at?: string | null
           id?: string
           location?: string | null
+          loaned_quantity?: number
+          loaned_to?: string | null
+          loaned_to_user_id?: string | null
           quantity?: number
+          sale_location?: string | null
+          sale_quantity?: number
           updated_at?: string | null
           user_id: string
         }
@@ -329,7 +339,12 @@ export type Database = {
           created_at?: string | null
           id?: string
           location?: string | null
+          loaned_quantity?: number
+          loaned_to?: string | null
+          loaned_to_user_id?: string | null
           quantity?: number
+          sale_location?: string | null
+          sale_quantity?: number
           updated_at?: string | null
           user_id?: string
         }
