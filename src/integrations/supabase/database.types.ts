@@ -14,6 +14,56 @@ export type Database = {
   }
   public: {
     Tables: {
+      collection_shares: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          include_loaned: boolean
+          include_personal: boolean
+          include_sale: boolean
+          invited_email: string | null
+          label: string | null
+          owner_id: string
+          revoked_at: string | null
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          include_loaned?: boolean
+          include_personal?: boolean
+          include_sale?: boolean
+          invited_email?: string | null
+          label?: string | null
+          owner_id: string
+          revoked_at?: string | null
+          token?: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          include_loaned?: boolean
+          include_personal?: boolean
+          include_sale?: boolean
+          invited_email?: string | null
+          label?: string | null
+          owner_id?: string
+          revoked_at?: string | null
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_shares_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       card_locations: {
         Row: {
           created_at: string | null
@@ -409,7 +459,38 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      current_email: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      shared_collection: {
+        Args: { p_token: string }
+        Returns: {
+          card_id: string
+          card_name: string
+          set_code: string | null
+          set_name: string | null
+          rarity: string
+          image_url: string | null
+          personal_quantity: number
+          personal_location: string | null
+          sale_quantity: number
+          sale_location: string | null
+          loaned_quantity: number
+          loaned_to: string | null
+        }[]
+      }
+      shared_collection_meta: {
+        Args: { p_token: string }
+        Returns: {
+          owner_name: string
+          label: string | null
+          include_personal: boolean
+          include_sale: boolean
+          include_loaned: boolean
+          expires_at: string | null
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
