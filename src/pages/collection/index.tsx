@@ -24,7 +24,11 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Loader2, Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { collectionService, type CollectionItem } from "@/services/collectionService";
+import {
+  collectionService,
+  type CollectionItem,
+  type CollectionStats,
+} from "@/services/collectionService";
 import {
   cardService,
   type Card as CardType,
@@ -58,7 +62,15 @@ export default function CollectionPage() {
   const [sets, setSets] = useState<Map<string, SetType>>(new Map());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [stats, setStats] = useState({ totalCards: 0, totalQuantity: 0, uniqueCards: 0 });
+  const [stats, setStats] = useState<CollectionStats>({
+    totalCards: 0,
+    totalQuantity: 0,
+    uniqueCards: 0,
+    forSaleQuantity: 0,
+    forSaleCards: 0,
+    loanedQuantity: 0,
+    loanedCards: 0,
+  });
   
   // Grouped collection by card name with printing details
   interface GroupedCard {
@@ -75,7 +87,7 @@ export default function CollectionPage() {
   
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedGroupedCard, setSelectedGroupedCard] = useState<GroupedCard | null>(null);
-  const [editPrintings, setEditPrintings] = useState<Array<{ cardId: string; setCode: string; quantity: number; location: string }>>([]);
+  const [editPrintings, setEditPrintings] = useState<Array<{ cardId: string; setCode: string; quantity: number; location: string; saleQuantity: number; saleLocation: string; loanedQuantity: number; loanedTo: string }>>([]);
   
   const [cardDetailOpen, setCardDetailOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
@@ -172,11 +184,19 @@ export default function CollectionPage() {
       setCode: p.setCode,
       quantity: p.item.quantity,
       location: p.item.location || "",
+      saleQuantity: p.item.sale_quantity ?? 0,
+      saleLocation: p.item.sale_location || "",
+      loanedQuantity: p.item.loaned_quantity ?? 0,
+      loanedTo: p.item.loaned_to || "",
     })));
     setEditDialogOpen(true);
   };
 
-  const handleUpdatePrinting = (cardId: string, field: 'quantity' | 'location', value: string | number) => {
+  const handleUpdatePrinting = (
+    cardId: string,
+    field: 'quantity' | 'location' | 'saleQuantity' | 'saleLocation' | 'loanedQuantity' | 'loanedTo',
+    value: string | number
+  ) => {
     setEditPrintings(prev => prev.map(p => 
       p.cardId === cardId ? { ...p, [field]: value } : p
     ));
@@ -185,16 +205,32 @@ export default function CollectionPage() {
   const handleSaveEdit = async () => {
     if (!user || !selectedGroupedCard) return;
 
+    // user_collections_loan_has_borrower would reject this. Say so in the field's
+    // own terms rather than surfacing a constraint violation.
+    const unnamedLoan = editPrintings.find(
+      (p) => p.loanedQuantity > 0 && !p.loanedTo.trim()
+    );
+    if (unnamedLoan) {
+      toast({
+        variant: "destructive",
+        title: "Who has it?",
+        description: `Enter who the ${unnamedLoan.setCode} copies are lent to, or set the lent quantity back to 0.`,
+      });
+      return;
+    }
+
     try {
       // Update each printing
       await Promise.all(
         editPrintings.map(printing => 
-          collectionService.updateCard(
-            user.id,
-            printing.cardId,
-            printing.quantity,
-            printing.location
-          )
+          collectionService.updateCard(user.id, printing.cardId, {
+            quantity: printing.quantity,
+            location: printing.location,
+            saleQuantity: printing.saleQuantity,
+            saleLocation: printing.saleLocation,
+            loanedQuantity: printing.loanedQuantity,
+            loanedTo: printing.loanedTo,
+          })
         )
       );
       
@@ -315,6 +351,24 @@ export default function CollectionPage() {
                 <div className="text-slate-300">
                   <span className="font-semibold text-white">{stats.totalQuantity}</span> total cards
                 </div>
+                {stats.loanedQuantity > 0 && (
+                  <div className="text-violet-400">
+                    <span className="font-semibold">{stats.loanedQuantity}</span> lent out
+                    <span className="text-slate-400">
+                      {" "}across {stats.loanedCards}{" "}
+                      {stats.loanedCards === 1 ? "printing" : "printings"}
+                    </span>
+                  </div>
+                )}
+                {stats.forSaleQuantity > 0 && (
+                  <div className="text-amber-400">
+                    <span className="font-semibold">{stats.forSaleQuantity}</span> for sale
+                    <span className="text-slate-400">
+                      {" "}across {stats.forSaleCards}{" "}
+                      {stats.forSaleCards === 1 ? "printing" : "printings"}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
             
@@ -413,6 +467,26 @@ export default function CollectionPage() {
                                     ({printing.item.location})
                                   </span>
                                 )}
+                                {(printing.item.loaned_quantity ?? 0) > 0 && (
+                                  <span className="text-violet-400">
+                                    · {printing.item.loaned_quantity}x lent
+                                    {printing.item.loaned_to && (
+                                      <span className="text-slate-400">
+                                        {" "}to {printing.item.loaned_to}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                                {(printing.item.sale_quantity ?? 0) > 0 && (
+                                  <span className="text-amber-400">
+                                    · {printing.item.sale_quantity}x for sale
+                                    {printing.item.sale_location && (
+                                      <span className="text-slate-400">
+                                        {" "}({printing.item.sale_location})
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -461,6 +535,9 @@ export default function CollectionPage() {
                     </Button>
                   </div>
                   
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
+                    Personal
+                  </p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label htmlFor={`quantity-${idx}`} className="text-white text-sm">Quantity</Label>
@@ -481,6 +558,69 @@ export default function CollectionPage() {
                         placeholder="Optional"
                         value={printing.location}
                         onChange={(e) => handleUpdatePrinting(printing.cardId, 'location', e.target.value)}
+                        className="bg-slate-700 border-slate-600 text-white mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Counted separately from the personal copies above, not
+                      carved out of them, so 3 personal + 2 for sale is 5 held. */}
+                  <p className="text-xs font-semibold text-amber-400/80 uppercase tracking-wide mt-3 mb-1">
+                    For sale / trade
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor={`sale-quantity-${idx}`} className="text-white text-sm">Quantity</Label>
+                      <Input
+                        id={`sale-quantity-${idx}`}
+                        type="number"
+                        min="0"
+                        value={printing.saleQuantity}
+                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'saleQuantity', parseInt(e.target.value) || 0)}
+                        className="bg-slate-700 border-slate-600 text-white mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor={`sale-location-${idx}`} className="text-white text-sm">Location</Label>
+                      <Input
+                        id={`sale-location-${idx}`}
+                        type="text"
+                        placeholder="Optional"
+                        value={printing.saleLocation}
+                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'saleLocation', e.target.value)}
+                        className="bg-slate-700 border-slate-600 text-white mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  {/* The borrower's name is required by the database whenever the
+                      quantity is above 0 — a loan you cannot trace is not useful.
+                      Setting the quantity back to 0 clears the name. */}
+                  <p className="text-xs font-semibold text-violet-400/80 uppercase tracking-wide mt-3 mb-1">
+                    Lent out
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor={`loaned-quantity-${idx}`} className="text-white text-sm">Quantity</Label>
+                      <Input
+                        id={`loaned-quantity-${idx}`}
+                        type="number"
+                        min="0"
+                        value={printing.loanedQuantity}
+                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'loanedQuantity', parseInt(e.target.value) || 0)}
+                        className="bg-slate-700 border-slate-600 text-white mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor={`loaned-to-${idx}`} className="text-white text-sm">
+                        Lent to {printing.loanedQuantity > 0 && <span className="text-violet-400">*</span>}
+                      </Label>
+                      <Input
+                        id={`loaned-to-${idx}`}
+                        type="text"
+                        placeholder={printing.loanedQuantity > 0 ? "Required" : "Optional"}
+                        value={printing.loanedTo}
+                        onChange={(e) => handleUpdatePrinting(printing.cardId, 'loanedTo', e.target.value)}
                         className="bg-slate-700 border-slate-600 text-white mt-1"
                       />
                     </div>
