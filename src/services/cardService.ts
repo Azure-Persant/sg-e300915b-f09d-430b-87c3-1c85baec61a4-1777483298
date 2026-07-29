@@ -8,6 +8,23 @@ export type UserCollection = Tables<"user_collections">;
 /** One row per card name — see public.card_catalog. */
 export type CatalogCard = ViewRows<"card_catalog">;
 
+/**
+ * cards.rarity holds these codes, matching the API's numeric rarity 1-9. The
+ * deck builder previously offered display names ("Common", "Super Rare") and
+ * compared them with eq(), which could never match a code.
+ */
+export const RARITY_LABELS: Record<string, string> = {
+  C: "Common",
+  U: "Uncommon",
+  R: "Rare",
+  SR: "Super Rare",
+  UR: "Ultra Rare",
+  PR: "Promotional Rare",
+  CSR: "Collector Super Rare",
+  CUR: "Collector Ultra Rare",
+  CPR: "Collector Promo Rare",
+};
+
 /** A distinct element/type/subtype/class value with its card count. */
 export type FilterOption = { value: string; count: number };
 
@@ -66,6 +83,13 @@ export const countActiveFilters = (filters: CardFilters): number =>
 // Kept as one literal: supabase-js infers the result type by parsing this
 // string, and concatenation defeats that, degrading the row type to an error
 // placeholder.
+// Printing-level columns for the deck builder's picker. A deck references a
+// specific printing (deck_cards.card_id -> cards.id), so it cannot use the
+// name-collapsed catalog view. Narrow because the picker renders only art and a
+// name.
+const PRINTING_COLUMNS =
+  "id, name, card_number, element, card_type, class, rarity, cost, power, life, speed, image_url, is_restricted, set_id, sets(id, code, name, rank)" as const;
+
 const CATALOG_COLUMNS =
   "id, name, set_id, card_number, element, card_type, class, rarity, cost, power, life, speed, image_url, illustrator, is_restricted, set_code, set_name, set_rank, printing_count" as const;
 
@@ -85,68 +109,9 @@ export const cardService = {
       .select("*")
       .order("release_date", { ascending: false });
 
-    console.log("getAllSets:", { data, error });
+    
     if (error) throw error;
     return data || [];
-  },
-
-  async getCards(filters?: {
-    setId?: string;
-    rarity?: string;
-    cardType?: string;
-    element?: string;
-    search?: string;
-  }) {
-    const allCards: CardWithSet[] = [];
-    const batchSize = 1000;
-    let from = 0;
-    let hasMore = true;
-
-    // Fetch all cards in batches of 1000 to bypass Supabase's limit
-    while (hasMore) {
-      let query = supabase
-        .from("cards")
-        .select("*, sets(*)")
-        .order("name", { ascending: true })
-        .range(from, from + batchSize - 1);
-
-      if (filters?.setId) {
-        query = query.eq("set_id", filters.setId);
-      }
-      if (filters?.rarity) {
-        query = query.eq("rarity", filters.rarity);
-      }
-      if (filters?.cardType) {
-        query = query.eq("card_type", filters.cardType);
-      }
-      if (filters?.element) {
-        query = query.eq("element", filters.element);
-      }
-      if (filters?.search) {
-        query = query.ilike("name", `%${filters.search}%`);
-      }
-
-      const { data, error } = await query;
-      
-      if (error) {
-        console.error("getCards batch error:", error);
-        throw error;
-      }
-
-      if (data && data.length > 0) {
-        allCards.push(...(data as CardWithSet[]));
-        console.log(`Fetched batch: ${from}-${from + data.length} (${data.length} cards)`);
-        
-        // If we got less than batchSize, we've reached the end
-        hasMore = data.length === batchSize;
-        from += batchSize;
-      } else {
-        hasMore = false;
-      }
-    }
-
-    console.log(`getCards: Total fetched ${allCards.length} cards`);
-    return allCards;
   },
 
   /**
@@ -241,6 +206,52 @@ export const cardService = {
   },
 
   /**
+   * One page of printings, for the deck builder's card picker.
+   *
+   * Replaces a getCards() call that looped until it had every matching printing
+   * — the whole catalog when no filter was set — and re-ran on every keystroke.
+   *
+   * Filters are printing-level on purpose: a deck holds a specific printing, so
+   * set and rarity have to mean the printing's set and rarity, not the
+   * representative one the catalog view picks.
+   */
+  async getCardsPage(options: {
+    page: number;
+    pageSize: number;
+    search?: string;
+    setId?: string;
+    rarity?: string;
+    /** A single value from cards.types, e.g. "ALLY". */
+    type?: string;
+  }) {
+    const from = (options.page - 1) * options.pageSize;
+
+    let query = supabase
+      .from("cards")
+      .select(PRINTING_COLUMNS, { count: "exact" })
+      .order("name", { ascending: true })
+      .order("card_number", { ascending: true })
+      .range(from, from + options.pageSize - 1);
+
+    const search = options.search?.trim();
+    if (search) query = query.ilike("name", `%${search}%`);
+    if (options.setId) query = query.eq("set_id", options.setId);
+
+    // rarity holds codes (C, U, R, SR, UR, PR, CSR, CUR, CPR), not display names.
+    if (options.rarity) query = query.eq("rarity", options.rarity);
+
+    // types is an array, so overlap rather than equality against card_type —
+    // card_type is a display string like "ALLY — HUMAN WARRIOR" and never equals
+    // a bare type name.
+    if (options.type) query = query.overlaps("types", [options.type]);
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+
+    return { rows: (data ?? []) as CardWithSet[], total: count ?? 0 };
+  },
+
+  /**
    * Every printing of one card, best first — same precedence as the view.
    *
    * PostgREST cannot reliably order on an embedded table's column, and a card
@@ -276,7 +287,6 @@ export const cardService = {
       .eq("id", cardId)
       .single();
 
-    console.log("getCardById:", { data, error });
     if (error) throw error;
     return data as CardWithSet;
   },
@@ -315,7 +325,6 @@ export const cardService = {
     }
 
     const { data, error } = await query;
-    console.log("getUserCollection:", { data, error });
     if (error) throw error;
     return (data || []) as CollectionCard[];
   },
@@ -328,7 +337,6 @@ export const cardService = {
         .eq("user_id", userId)
         .eq("card_id", cardId);
 
-      console.log("deleteCollection:", { error });
       if (error) throw error;
       return;
     }
@@ -344,7 +352,6 @@ export const cardService = {
       .select()
       .single();
 
-    console.log("updateCollection:", { data, error });
     if (error) throw error;
     return data;
   },
@@ -355,7 +362,6 @@ export const cardService = {
       .select("quantity")
       .eq("user_id", userId);
 
-    console.log("getCollectionStats:", { data, error });
     if (error) throw error;
 
     const totalCards = (data || []).reduce((sum, item) => sum + (item.quantity || 0), 0);
