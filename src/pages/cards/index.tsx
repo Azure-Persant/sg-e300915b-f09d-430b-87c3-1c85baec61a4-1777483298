@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RefreshCw, Database, Plus } from "lucide-react";
+import { Loader2, RefreshCw, Database, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { CardFilterBar } from "@/components/CardFilterBar";
 import type {
@@ -199,8 +199,20 @@ export default function CardsPage() {
     }
   };
 
-  const currentCard = selectedCardPrintings.find(p => p.id === selectedPrintingId) || selectedCardPrintings[0];
+  const printingIndex = Math.max(
+    0,
+    selectedCardPrintings.findIndex((p) => p.id === selectedPrintingId)
+  );
+  const currentCard = selectedCardPrintings[printingIndex];
   const hasMultiplePrintings = selectedCardPrintings.length > 1;
+
+  /** Wraps at both ends, so the arrows never dead-end on the first or last printing. */
+  const stepPrinting = (delta: number) => {
+    const count = selectedCardPrintings.length;
+    if (count === 0) return;
+    const next = (printingIndex + delta + count) % count;
+    setSelectedPrintingId(selectedCardPrintings[next].id);
+  };
   const hasAnyFilter =
     countActiveFilters(debouncedFilters) > 0 || Boolean(debouncedFilters.search?.trim());
 
@@ -393,23 +405,49 @@ export default function CardsPage() {
                       />
                     )}
                     {hasMultiplePrintings && (
-                      <div className="w-full max-w-md">
-                        <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
-                          <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-slate-800 border-slate-700">
-                            {selectedCardPrintings.map((printing) => (
-                              <SelectItem
-                                key={printing.id}
-                                value={printing.id}
-                                className="text-white hover:bg-slate-700 focus:bg-slate-700"
-                              >
-                                {printing.sets?.code ?? "???"} - {printing.rarity}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                      <div className="w-full max-w-md space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            aria-label="Previous printing"
+                            onClick={() => stepPrinting(-1)}
+                            className="shrink-0 bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+
+                          <Select value={selectedPrintingId} onValueChange={setSelectedPrintingId}>
+                            <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-slate-800 border-slate-700">
+                              {selectedCardPrintings.map((printing) => (
+                                <SelectItem
+                                  key={printing.id}
+                                  value={printing.id}
+                                  className="text-white hover:bg-slate-700 focus:bg-slate-700"
+                                >
+                                  {printing.sets?.code ?? "???"} - {printing.rarity}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            aria-label="Next printing"
+                            onClick={() => stepPrinting(1)}
+                            className="shrink-0 bg-slate-800 border-slate-700 text-white hover:bg-slate-700 hover:text-white"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        <p className="text-center text-xs text-slate-400">
+                          Printing {printingIndex + 1} of {selectedCardPrintings.length}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -420,6 +458,16 @@ export default function CardsPage() {
                       <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Name</h3>
                       <p className="text-lg">{currentCard.name}</p>
                     </div>
+
+                    {currentCard.sets && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">Set</h3>
+                        <p className="text-lg">
+                          {currentCard.sets.name}
+                          <span className="ml-2 text-sm text-slate-400">({currentCard.sets.code})</span>
+                        </p>
+                      </div>
+                    )}
 
                     {currentCard.rarity && (
                       <div>
