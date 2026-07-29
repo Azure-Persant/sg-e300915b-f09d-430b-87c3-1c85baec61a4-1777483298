@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { TablesUpdate } from "@/integrations/supabase/types";
 import type { Card } from "./cardService";
 
 export interface CollectionItem {
@@ -49,9 +50,16 @@ export interface HoldingInput {
   loanedToUserId?: string | null;
 }
 
-/** Maps the camelCase input to columns, dropping keys the caller did not set. */
-const holdingColumns = (holding: HoldingInput) => {
-  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+/**
+ * Maps the camelCase input to columns, dropping keys the caller did not set.
+ *
+ * Typed as the generated Update row rather than Record<string, unknown>: newer
+ * @supabase/supabase-js releases reject an index-signature object outright
+ * ("Type 'unknown' is not assignable to type 'never'"), and the generated type
+ * catches a mistyped column name here instead of at runtime.
+ */
+const holdingColumns = (holding: HoldingInput): TablesUpdate<"user_collections"> => {
+  const row: TablesUpdate<"user_collections"> = { updated_at: new Date().toISOString() };
   if (holding.quantity !== undefined) row.quantity = holding.quantity;
   if (holding.location !== undefined) row.location = holding.location || null;
   if (holding.saleQuantity !== undefined) row.sale_quantity = holding.saleQuantity;
