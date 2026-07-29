@@ -6,6 +6,12 @@ import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   collectionShareService,
@@ -28,6 +34,7 @@ export default function SharedCollectionPage() {
   const [holdings, setHoldings] = useState<SharedHolding[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [openCard, setOpenCard] = useState<SharedHolding | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -133,7 +140,11 @@ export default function SharedCollectionPage() {
               ) : (
                 <div className="space-y-2">
                   {visible.map((h) => (
-                    <Card key={h.card_id} className="bg-slate-800/50 border-slate-700">
+                    <Card
+                      key={h.card_id}
+                      onClick={() => setOpenCard(h)}
+                      className="cursor-pointer bg-slate-800/50 border-slate-700 transition-colors hover:border-cyan-500/60"
+                    >
                       <CardContent className="flex flex-wrap items-center gap-3 p-3">
                         {h.image_url && (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -158,29 +169,16 @@ export default function SharedCollectionPage() {
                         </div>
 
                         <div className="ml-auto flex flex-wrap items-center gap-4 text-sm">
+                          {/* Counts only. Where the cards are, and who is
+                              holding a loan, stay with the owner. */}
                           {h.personal_quantity > 0 && (
-                            <span className="text-white">
-                              {h.personal_quantity}x
-                              {h.personal_location && (
-                                <span className="text-slate-400"> ({h.personal_location})</span>
-                              )}
-                            </span>
+                            <span className="text-white">{h.personal_quantity}x</span>
                           )}
                           {h.sale_quantity > 0 && (
-                            <span className="text-amber-400">
-                              {h.sale_quantity}x for sale
-                              {h.sale_location && (
-                                <span className="text-slate-400"> ({h.sale_location})</span>
-                              )}
-                            </span>
+                            <span className="text-amber-400">{h.sale_quantity}x for sale</span>
                           )}
                           {h.loaned_quantity > 0 && (
-                            <span className="text-violet-400">
-                              {h.loaned_quantity}x lent
-                              {h.loaned_to && (
-                                <span className="text-slate-400"> to {h.loaned_to}</span>
-                              )}
-                            </span>
+                            <span className="text-violet-400">{h.loaned_quantity}x lent out</span>
                           )}
                         </div>
                       </CardContent>
@@ -191,7 +189,76 @@ export default function SharedCollectionPage() {
             </>
           )}
         </main>
+
+        <Dialog open={!!openCard} onOpenChange={(open) => !open && setOpenCard(null)}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-slate-900 border-slate-700">
+            {openCard && (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="text-2xl text-white">{openCard.card_name}</DialogTitle>
+                </DialogHeader>
+
+                <div className="grid gap-6 md:grid-cols-2">
+                  <div>
+                    {openCard.image_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={openCard.image_url}
+                        alt={openCard.card_name}
+                        className="w-full max-w-[380px] rounded-lg shadow-2xl"
+                      />
+                    )}
+                  </div>
+
+                  <div className="space-y-4 text-white">
+                    <Detail label="Set">
+                      {openCard.set_name ?? "Unknown"}
+                      {openCard.set_code ? ` (${openCard.set_code})` : ""}
+                    </Detail>
+                    <Detail label="Rarity">{openCard.rarity}</Detail>
+                    {openCard.card_type && <Detail label="Type">{openCard.card_type}</Detail>}
+                    {openCard.element && <Detail label="Element">{openCard.element}</Detail>}
+                    {openCard.cost !== null && <Detail label="Cost">{openCard.cost}</Detail>}
+                    {openCard.effect_text && (
+                      <Detail label="Effect">
+                        <span className="text-base leading-relaxed">{openCard.effect_text}</span>
+                      </Detail>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-4">
+                      {openCard.power !== null && <Detail label="Power">{openCard.power}</Detail>}
+                      {openCard.life !== null && <Detail label="Life">{openCard.life}</Detail>}
+                      {openCard.speed && <Detail label="Speed">{openCard.speed}</Detail>}
+                    </div>
+
+                    <div className="border-t border-slate-700 pt-3 space-y-1 text-sm">
+                      {openCard.personal_quantity > 0 && (
+                        <p className="text-white">{openCard.personal_quantity} in collection</p>
+                      )}
+                      {openCard.sale_quantity > 0 && (
+                        <p className="text-amber-400">{openCard.sale_quantity} for sale</p>
+                      )}
+                      {openCard.loaned_quantity > 0 && (
+                        <p className="text-violet-400">{openCard.loaned_quantity} lent out</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </>
+  );
+}
+
+/** Small labelled row, matching how the card browser presents details. */
+function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">{label}</h3>
+      <p className="text-lg">{children}</p>
+    </div>
   );
 }
