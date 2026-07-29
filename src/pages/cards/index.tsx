@@ -22,10 +22,17 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, RefreshCw, Database, Plus } from "lucide-react";
+import { Loader2, RefreshCw, Database, Plus } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import type { CardWithSet, CatalogCard } from "@/services/cardService";
-import { cardService } from "@/services/cardService";
+import { CardFilterBar } from "@/components/CardFilterBar";
+import type {
+  CardFilters,
+  CardWithSet,
+  CatalogCard,
+  FilterOptions,
+  Set as SetRow,
+} from "@/services/cardService";
+import { EMPTY_FILTERS, cardService, countActiveFilters } from "@/services/cardService";
 import { collectionService } from "@/services/collectionService";
 
 // Helper function to convert text to Title Case
@@ -50,8 +57,15 @@ export default function CardsPage() {
   const { user } = useAuth();
   const [displayCards, setDisplayCards] = useState<CatalogCard[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filters, setFilters] = useState<CardFilters>(EMPTY_FILTERS);
+  const [debouncedFilters, setDebouncedFilters] = useState<CardFilters>(EMPTY_FILTERS);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    elements: [],
+    types: [],
+    subtypes: [],
+    classes: [],
+  });
+  const [sets, setSets] = useState<SetRow[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [dbStatus, setDbStatus] = useState<any>(null);
@@ -65,23 +79,42 @@ export default function CardsPage() {
   const { toast } = useToast();
   const router = useRouter();
 
-  // Keystrokes update the input immediately but only settle into a query after
+  // Keystrokes update the inputs immediately but only settle into a query after
   // a pause. Without this, every character triggered a fresh fetch.
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
+      setDebouncedFilters(filters);
       setCurrentPage(1);
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [filters]);
 
   useEffect(() => {
     loadCards();
-  }, [currentPage, debouncedSearch]);
+  }, [currentPage, debouncedFilters]);
 
   useEffect(() => {
     loadDbStatus();
+    loadFilterOptions();
   }, []);
+
+  const loadFilterOptions = async () => {
+    try {
+      const [options, allSets] = await Promise.all([
+        cardService.getFilterOptions(),
+        cardService.getAllSets(),
+      ]);
+      setFilterOptions(options);
+      // Base expansions first, then alphabetically — same precedence the grid uses.
+      setSets(
+        allSets
+          .slice()
+          .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name))
+      );
+    } catch (error) {
+      console.error("Failed to load filter options:", error);
+    }
+  };
 
   const loadDbStatus = async () => {
     try {
@@ -102,7 +135,7 @@ export default function CardsPage() {
       const { rows, total } = await cardService.getCatalogPage({
         page: currentPage,
         pageSize: cardsPerPage,
-        search: debouncedSearch,
+        filters: debouncedFilters,
       });
 
       setDisplayCards(rows);
@@ -116,10 +149,6 @@ export default function CardsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
   };
 
   const handlePageChange = (newPage: number) => {
@@ -172,6 +201,8 @@ export default function CardsPage() {
 
   const currentCard = selectedCardPrintings.find(p => p.id === selectedPrintingId) || selectedCardPrintings[0];
   const hasMultiplePrintings = selectedCardPrintings.length > 1;
+  const hasAnyFilter =
+    countActiveFilters(debouncedFilters) > 0 || Boolean(debouncedFilters.search?.trim());
 
   return (
     <>
@@ -207,16 +238,12 @@ export default function CardsPage() {
           </div>
 
           <div className="mb-6">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 h-5 w-5" />
-              <Input
-                type="text"
-                placeholder="Search cards..."
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="pl-10 bg-slate-800 border-slate-700 text-white placeholder:text-slate-400"
-              />
-            </div>
+            <CardFilterBar
+              filters={filters}
+              onChange={setFilters}
+              options={filterOptions}
+              sets={sets}
+            />
           </div>
 
           {loading ? (
@@ -226,8 +253,8 @@ export default function CardsPage() {
           ) : displayCards.length === 0 ? (
             <div className="text-center py-20">
               <p className="text-slate-400 text-lg">
-                {debouncedSearch
-                  ? `No cards match "${debouncedSearch}".`
+                {hasAnyFilter
+                  ? "No cards match these filters."
                   : "No cards yet \u2014 the catalog syncs automatically each day."}
               </p>
             </div>
