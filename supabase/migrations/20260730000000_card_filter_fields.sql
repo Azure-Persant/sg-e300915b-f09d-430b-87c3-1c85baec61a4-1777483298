@@ -50,7 +50,17 @@ create index if not exists cards_cost_reserve_idx on public.cards (cost_reserve)
 -- appears in, so filtering by set means "cards available in this set" while the
 -- tile still shows the best-ranked printing's art. array_agg(distinct ...) is
 -- not allowed as a window function, hence the CTE.
-create or replace view public.card_catalog
+--
+-- Dropped and recreated rather than CREATE OR REPLACE: that form may only append
+-- columns at the end of an existing view, and this inserts types/subtypes/
+-- classes mid-list, which Postgres rejects with
+--   cannot change name of view column "rarity" to "types" (42P16)
+-- The drop is deliberately not CASCADE, so if anything ever does depend on this
+-- view the migration fails loudly instead of quietly removing it. Grants are
+-- reapplied below, in the same transaction.
+drop view if exists public.card_catalog;
+
+create view public.card_catalog
 with (security_invoker = true) as
 with per_name as (
   select
@@ -105,7 +115,11 @@ grant select on public.card_catalog to anon, authenticated;
 
 -- Distinct filter values with counts, so the filter bar can populate every
 -- dropdown from one request instead of scanning the catalog in the browser.
-create or replace view public.card_filter_options
+-- Dropped first for the same reason as above, so a later change to its shape
+-- does not hit the same 42P16 error.
+drop view if exists public.card_filter_options;
+
+create view public.card_filter_options
 with (security_invoker = true) as
 -- count(distinct name), not count(*): a card with three printings is still one
 -- card, and "WIND (2)" for a single card would misread as two.
