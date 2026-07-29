@@ -198,6 +198,49 @@ function assertCardRowsMatchSchema(rows) {
   }
 }
 
+/**
+ * Confirm the live table has every column this sync writes, before spending ~90s
+ * fetching 151 pages.
+ *
+ * assertCardRowsMatchSchema checks rows against CARD_COLUMN_TYPES, which is this
+ * script's idea of the schema — it cannot tell that a column is missing from the
+ * database. That surfaced only at the first upsert, as
+ *   Could not find the 'classes' column of 'cards' in the schema cache (PGRST204)
+ * after the entire catalog had already been downloaded.
+ *
+ * One request for the happy path. If it fails, one request per column so the
+ * message can name every missing column rather than only the first one
+ * PostgREST happens to complain about.
+ */
+async function assertCardsTableHasColumns(supabase) {
+  const columns = Object.keys(CARD_COLUMN_TYPES);
+  const probe = async (select) => {
+    const { error } = await supabase.from("cards").select(select).limit(1);
+    return error;
+  };
+
+  const combined = await probe(columns.join(","));
+  if (!combined) return;
+
+  const missing = [];
+  for (const column of columns) {
+    if (await probe(column)) missing.push(column);
+  }
+
+  if (missing.length) {
+    throw new Error(
+      `public.cards is missing ${missing.length} column(s) this sync writes: ` +
+        `${missing.join(", ")}. Apply the pending migration in supabase/migrations ` +
+        `and re-run. If those columns do exist, PostgREST's schema cache is stale — ` +
+        `run "notify pgrst, 'reload schema';" in the SQL editor, or restart the project.`
+    );
+  }
+
+  // Every column resolves on its own, so the combined probe failed for some
+  // other reason. Surface it rather than let the sync continue blindly.
+  throw new Error(`Could not verify the public.cards schema: ${errorMessage(combined)}`);
+}
+
 const inGitHubActions = () => process.env.GITHUB_ACTIONS === "true";
 
 /**
@@ -527,6 +570,11 @@ async function main() {
 
   try {
     if (supabase) {
+      // Before anything expensive, and before opening a sync_history row: a
+      // schema mismatch is knowable in one request and should not cost a fetch.
+      await assertCardsTableHasColumns(supabase);
+      log(`Verified public.cards has all ${Object.keys(CARD_COLUMN_TYPES).length} columns`);
+
       // A run killed mid-flight never records its own failure, so its row would
       // stay "running" forever and skew every later diagnosis.
       const { data: reaped, error: reapError } = await supabase
