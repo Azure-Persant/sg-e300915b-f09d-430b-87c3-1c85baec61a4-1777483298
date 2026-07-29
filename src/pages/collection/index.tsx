@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
+import { CollectionShares } from "@/components/CollectionShares";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -379,6 +380,10 @@ export default function CollectionPage() {
               <Plus className="mr-2 h-4 w-4" />
               Add Cards
             </Button>
+          </div>
+
+          <div className="mb-6">
+            <CollectionShares userId={user.id} />
           </div>
 
           <div className="mb-6">
