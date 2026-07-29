@@ -56,8 +56,13 @@ const CARD_COLUMN_TYPES = {
   element: "string?",
   card_type: "string",
   class: "string?",
+  types: "string[]",
+  subtypes: "string[]",
+  classes: "string[]",
   rarity: "string",
   cost: "number",
+  cost_memory: "number?",
+  cost_reserve: "number?",
   power: "number?",
   life: "number?",
   speed: "string?",
@@ -113,6 +118,9 @@ const batches = (items, size) => {
 
 const log = (...parts) => console.log(`[${new Date().toISOString()}]`, ...parts);
 
+/** Guards the text[] columns against nulls or stray blanks from the payload. */
+const isNonEmptyString = (value) => typeof value === "string" && value.trim() !== "";
+
 /**
  * card.speed is a BOOLEAN in the API payload — true = Fast, false = Slow — which
  * is why the old integer cards.speed column rejected the first batch outright.
@@ -140,13 +148,32 @@ function assertCardRowsMatchSchema(rows) {
 
     for (const [column, spec] of Object.entries(CARD_COLUMN_TYPES)) {
       const nullable = spec.endsWith("?");
-      const expected = nullable ? spec.slice(0, -1) : spec;
+      const bare = nullable ? spec.slice(0, -1) : spec;
+      const isArray = bare.endsWith("[]");
+      const expected = isArray ? bare.slice(0, -2) : bare;
       const value = row[column];
 
       if (value === null || value === undefined) {
         if (!nullable) problems.push(`${label}: ${column} must not be null`);
         continue;
       }
+
+      if (isArray) {
+        if (!Array.isArray(value)) {
+          problems.push(
+            `${label}: ${column} is ${typeof value} ${JSON.stringify(value)}, expected ${expected}[]`
+          );
+        } else {
+          const bad = value.findIndex((v) => typeof v !== expected);
+          if (bad !== -1) {
+            problems.push(
+              `${label}: ${column}[${bad}] is ${typeof value[bad]} ${JSON.stringify(value[bad])}, expected ${expected}`
+            );
+          }
+        }
+        continue;
+      }
+
       if (typeof value !== expected) {
         problems.push(
           `${label}: ${column} is ${typeof value} ${JSON.stringify(value)}, expected ${expected}`
@@ -345,9 +372,29 @@ function buildCardRows(cards, setCodeToId) {
   const rows = [];
   const skipped = [];
 
+
   for (const card of cards) {
-    const types = Array.isArray(card.types) ? card.types : [];
-    const subtypes = Array.isArray(card.subtypes) ? card.subtypes : [];
+    const types = Array.isArray(card.types) ? card.types.filter(isNonEmptyString) : [];
+    const subtypes = Array.isArray(card.subtypes) ? card.subtypes.filter(isNonEmptyString) : [];
+    const classes = Array.isArray(card.classes)
+      ? card.classes.filter(isNonEmptyString)
+      : [];
+
+    // The API echoes every class into subtypes: a Cleric Spell arrives as
+    // subtypes [CLERIC, SPELL] with classes [CLERIC]. All 2,240 cards do this,
+    // which put CLERIC, MAGE, WARRIOR and six more into the Subtype filter where
+    // they belong under Class.
+    //
+    // Compared against this card's own classes, deliberately not against the set
+    // of all class names. SPIRIT is a class on 38 cards but a genuine subtype on
+    // 4 that declare a different class — Mistbound Watcher is class MAGE,
+    // subtype SPIRIT; Ghosts of Pendragon is class WARRIOR, subtypes HUMAN and
+    // SPIRIT. Stripping by name would wrongly erase SPIRIT from those 4.
+    //
+    // cardType below keeps the unstripped list, so the printed type line still
+    // reads "ACTION — CLERIC SPELL" exactly as it does on the card.
+    const trueSubtypes = subtypes.filter((subtype) => !classes.includes(subtype));
+
     let cardType = types.join(" ").toUpperCase();
     if (subtypes.length) {
       cardType = cardType
@@ -370,11 +417,17 @@ function buildCardRows(cards, setCodeToId) {
         card_number: edition.collector_number || "UNKNOWN",
         element: card.element ?? null,
         card_type: cardType || "Unknown",
-        class: Array.isArray(card.classes) && card.classes.length
-          ? card.classes.join(", ")
-          : null,
+        class: classes.length ? classes.join(", ") : null,
+        // Structured alongside the display strings above, so the filter bar can
+        // query them. No card carries both costs, but they mean different
+        // things, so they are kept apart rather than collapsed into `cost`.
+        types,
+        subtypes: trueSubtypes,
+        classes,
         rarity: RARITY_BY_NUMBER[edition.rarity] ?? "UNKNOWN",
         cost: card.cost_reserve ?? card.cost_memory ?? 0,
+        cost_memory: typeof card.cost_memory === "number" ? card.cost_memory : null,
+        cost_reserve: typeof card.cost_reserve === "number" ? card.cost_reserve : null,
         power: card.power ?? null,
         life: card.life ?? null,
         speed: speedLabel(card.speed),
