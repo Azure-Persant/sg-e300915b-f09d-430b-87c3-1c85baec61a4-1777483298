@@ -1,111 +1,95 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
+import type { Tables } from "@/integrations/supabase/types";
 import type { Card } from "./cardService";
 
-export interface CollectionItem {
+export type CollectionBucket = "personal" | "sale" | "loaned";
+
+export const BUCKETS: CollectionBucket[] = ["personal", "sale", "loaned"];
+
+export const BUCKET_LABELS: Record<CollectionBucket, string> = {
+  personal: "Personal",
+  sale: "For sale / trade",
+  loaned: "Lent out",
+};
+
+/**
+ * One place a card is held. A card has as many of these as it has places:
+ * 1 in Box 1, 4 in Box 2, 2 in Alice's deck.
+ */
+export interface Holding {
   id: string;
   user_id: string;
   card_id: string;
-  /** Copies kept for personal use. */
+  bucket: CollectionBucket;
+  /** Where the copies are, or for a loan who holds them. "" means unspecified. */
+  location: string;
+  /** Always above 0 — the row is deleted rather than zeroed. */
   quantity: number;
-  location: string | null;
-  /** Copies available for sale or trade, counted separately from quantity. */
-  sale_quantity: number;
-  sale_location: string | null;
-  /** Copies lent out, counted separately from quantity. */
-  loaned_quantity: number;
-  loaned_to: string | null;
   loaned_to_user_id: string | null;
   created_at: string;
   updated_at: string;
   card?: Card;
 }
 
-export interface CollectionStats {
-  totalCards: number;
-  totalQuantity: number;
-  uniqueCards: number;
-  /** Copies across the for-sale bucket, and how many distinct cards have any. */
-  forSaleQuantity: number;
-  forSaleCards: number;
-  /** Copies currently lent out, and how many distinct cards are affected. */
-  loanedQuantity: number;
-  loanedCards: number;
-}
-
-/**
- * A holding is three independent buckets: personal, for sale, and loaned out.
- * They are counted separately rather than carved out of each other, so 3 personal
- * + 2 for sale + 1 lent is 6 copies held. Omitted fields are left alone rather
- * than reset, so editing one bucket never silently clears another.
- */
-export interface HoldingInput {
-  quantity?: number;
-  location?: string | null;
-  saleQuantity?: number;
-  saleLocation?: string | null;
-  loanedQuantity?: number;
-  /** Required by the database whenever loanedQuantity is above 0. */
-  loanedTo?: string | null;
+/** A place as the editor holds it, before it becomes a row. */
+export interface PlaceInput {
+  bucket: CollectionBucket;
+  location: string;
+  quantity: number;
   loanedToUserId?: string | null;
 }
 
-/**
- * Maps the camelCase input to columns, dropping keys the caller did not set.
- *
- * Typed as the generated Update row rather than Record<string, unknown>: newer
- * @supabase/supabase-js releases reject an index-signature object outright
- * ("Type 'unknown' is not assignable to type 'never'"), and the generated type
- * catches a mistyped column name here instead of at runtime.
- */
-const holdingColumns = (holding: HoldingInput): TablesUpdate<"user_collections"> => {
-  const row: TablesUpdate<"user_collections"> = { updated_at: new Date().toISOString() };
-  if (holding.quantity !== undefined) row.quantity = holding.quantity;
-  if (holding.location !== undefined) row.location = holding.location || null;
-  if (holding.saleQuantity !== undefined) row.sale_quantity = holding.saleQuantity;
-  if (holding.saleLocation !== undefined) row.sale_location = holding.saleLocation || null;
-  if (holding.loanedQuantity !== undefined) row.loaned_quantity = holding.loanedQuantity;
-  if (holding.loanedTo !== undefined) row.loaned_to = holding.loanedTo || null;
-  if (holding.loanedToUserId !== undefined) row.loaned_to_user_id = holding.loanedToUserId || null;
+export interface CollectionStats {
+  /** Distinct printings held, counting a card once however many places it sits in. */
+  uniqueCards: number;
+  totalQuantity: number;
+  personalQuantity: number;
+  forSaleQuantity: number;
+  forSaleCards: number;
+  loanedQuantity: number;
+  loanedCards: number;
+  /** Distinct place names in use, for the location suggestions. */
+  locations: string[];
+}
 
-  // user_collections_loan_has_borrower rejects a loan with no borrower named.
-  // Clearing the loan clears the borrower too, so returning cards never leaves
-  // a stale name behind.
-  if (row.loaned_quantity === 0) {
-    row.loaned_to = null;
-    row.loaned_to_user_id = null;
-  }
-  return row;
-};
+const HOLDING_COLUMNS =
+  "id, user_id, card_id, bucket, location, quantity, loaned_to_user_id, created_at, updated_at";
+
+/** Blank locations are stored as "", never null, so the unique index can use them. */
+const normaliseLocation = (location: string | null | undefined): string =>
+  (location ?? "").trim();
 
 export const collectionService = {
-  // Get user's entire collection
-  async getCollection(userId: string): Promise<CollectionItem[]> {
+  /** Every place the user holds a card, with the card joined. */
+  async getHoldings(userId: string): Promise<Holding[]> {
     const { data, error } = await supabase
       .from("user_collections")
-      .select(`
-        *,
-        card:cards(*)
-      `)
+      .select(`${HOLDING_COLUMNS}, card:cards(*)`)
       .eq("user_id", userId)
-      .order("created_at", { ascending: false });
+      .order("bucket")
+      .order("location");
 
     if (error) {
       console.error("Error fetching collection:", error);
       throw error;
     }
 
-    return (data || []).map(item => ({
-      ...item,
-      card: item.card as Card
-    }));
+    return (data ?? []).map((row) => ({
+      ...row,
+      bucket: row.bucket as CollectionBucket,
+      card: row.card as Card,
+    })) as Holding[];
   },
 
-  // Get collection stats
+  /** Kept for callers that still say getCollection. */
+  async getCollection(userId: string): Promise<Holding[]> {
+    return this.getHoldings(userId);
+  },
+
   async getCollectionStats(userId: string): Promise<CollectionStats> {
     const { data, error } = await supabase
       .from("user_collections")
-      .select("quantity, sale_quantity, loaned_quantity")
+      .select("card_id, bucket, location, quantity")
       .eq("user_id", userId);
 
     if (error) {
@@ -114,46 +98,135 @@ export const collectionService = {
     }
 
     const rows = data ?? [];
-    const totalQuantity = rows.reduce((sum, item) => sum + item.quantity, 0);
-    const forSaleQuantity = rows.reduce((sum, item) => sum + (item.sale_quantity ?? 0), 0);
-    const loanedQuantity = rows.reduce((sum, item) => sum + (item.loaned_quantity ?? 0), 0);
-
-    // uniqueCards counts rows, which is one per printing held — a card kept in
-    // three sets counts three times, matching what the collection page lists.
-    const uniqueCards = rows.length;
+    const sum = (bucket: CollectionBucket) =>
+      rows.filter((r) => r.bucket === bucket).reduce((total, r) => total + r.quantity, 0);
+    const cards = (bucket: CollectionBucket) =>
+      new Set(rows.filter((r) => r.bucket === bucket).map((r) => r.card_id)).size;
 
     return {
-      totalCards: uniqueCards,
-      totalQuantity,
-      uniqueCards,
-      forSaleQuantity,
-      forSaleCards: rows.filter((item) => (item.sale_quantity ?? 0) > 0).length,
-      loanedQuantity,
-      loanedCards: rows.filter((item) => (item.loaned_quantity ?? 0) > 0).length,
+      uniqueCards: new Set(rows.map((r) => r.card_id)).size,
+      totalQuantity: rows.reduce((total, r) => total + r.quantity, 0),
+      personalQuantity: sum("personal"),
+      forSaleQuantity: sum("sale"),
+      forSaleCards: cards("sale"),
+      loanedQuantity: sum("loaned"),
+      loanedCards: cards("loaned"),
+      locations: Array.from(
+        new Set(rows.map((r) => r.location).filter((l) => l !== ""))
+      ).sort((a, b) => a.localeCompare(b)),
     };
   },
 
   /**
-   * Add or update a holding. On conflict only the columns present in `holding`
-   * are written, so adding personal copies from /cards cannot wipe a sale count
-   * that was set on /collection.
+   * Replace every place for one card with exactly `places`.
+   *
+   * Written before deleting, so a failure part-way leaves extra rows rather than
+   * losing copies. Places with quantity 0 are simply absent from the input, which
+   * is how a place is removed — the table rejects a row with 0 copies.
    */
-  async addCard(
+  async setCardHoldings(userId: string, cardId: string, places: PlaceInput[]): Promise<void> {
+    const wanted = places
+      .map((place) => ({ ...place, location: normaliseLocation(place.location) }))
+      .filter((place) => place.quantity > 0);
+
+    const unnamedLoan = wanted.find((p) => p.bucket === "loaned" && p.location === "");
+    if (unnamedLoan) {
+      // The database enforces this too; failing here gives a better message.
+      throw new Error("A loan has to say who is holding the cards.");
+    }
+
+    // Two places with the same name in the same bucket are one place.
+    const merged = new Map<string, PlaceInput>();
+    for (const place of wanted) {
+      const key = `${place.bucket}|${place.location}`;
+      const existing = merged.get(key);
+      merged.set(
+        key,
+        existing ? { ...existing, quantity: existing.quantity + place.quantity } : place
+      );
+    }
+
+    const { data: current, error: readError } = await supabase
+      .from("user_collections")
+      .select("id, bucket, location")
+      .eq("user_id", userId)
+      .eq("card_id", cardId);
+
+    if (readError) throw readError;
+
+    if (merged.size > 0) {
+      const { error: writeError } = await supabase.from("user_collections").upsert(
+        Array.from(merged.values()).map((place) => ({
+          user_id: userId,
+          card_id: cardId,
+          bucket: place.bucket,
+          location: place.location,
+          quantity: place.quantity,
+          loaned_to_user_id: place.loanedToUserId ?? null,
+          updated_at: new Date().toISOString(),
+        })),
+        { onConflict: "user_id,card_id,bucket,location" }
+      );
+
+      if (writeError) throw writeError;
+    }
+
+    const staleIds = (current ?? [])
+      .filter((row) => !merged.has(`${row.bucket}|${row.location}`))
+      .map((row) => row.id);
+
+    if (staleIds.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("user_collections")
+        .delete()
+        .in("id", staleIds);
+
+      if (deleteError) throw deleteError;
+    }
+  },
+
+  /**
+   * Add copies to one place, on top of whatever is already there.
+   *
+   * Used by the card browser, where "add 2" means two more rather than a new
+   * total. Reads first because PostgREST cannot express quantity = quantity + n.
+   */
+  async addCopies(
     userId: string,
     cardId: string,
-    holding: HoldingInput | number,
-    location?: string
+    bucket: CollectionBucket,
+    location: string,
+    quantity: number
   ): Promise<void> {
-    // Tolerates the older (quantity, location) positional form.
-    const input: HoldingInput =
-      typeof holding === "number" ? { quantity: holding, location } : holding;
+    if (quantity <= 0) return;
+    const place = normaliseLocation(location);
 
-    const { error } = await supabase
+    if (bucket === "loaned" && place === "") {
+      throw new Error("A loan has to say who is holding the cards.");
+    }
+
+    const { data: existing, error: readError } = await supabase
       .from("user_collections")
-      .upsert(
-        { user_id: userId, card_id: cardId, ...holdingColumns(input) },
-        { onConflict: "user_id,card_id" }
-      );
+      .select("quantity")
+      .eq("user_id", userId)
+      .eq("card_id", cardId)
+      .eq("bucket", bucket)
+      .eq("location", place)
+      .maybeSingle();
+
+    if (readError) throw readError;
+
+    const { error } = await supabase.from("user_collections").upsert(
+      {
+        user_id: userId,
+        card_id: cardId,
+        bucket,
+        location: place,
+        quantity: (existing?.quantity ?? 0) + quantity,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,card_id,bucket,location" }
+    );
 
     if (error) {
       console.error("Error adding card to collection:", error);
@@ -161,29 +234,17 @@ export const collectionService = {
     }
   },
 
-  /** Update either bucket. Fields left undefined are not touched. */
-  async updateCard(
+  /** Older name, kept so the card browser keeps working. */
+  async addCard(
     userId: string,
     cardId: string,
-    holding: HoldingInput | number,
+    quantity: number,
     location?: string
   ): Promise<void> {
-    const input: HoldingInput =
-      typeof holding === "number" ? { quantity: holding, location } : holding;
-
-    const { error } = await supabase
-      .from("user_collections")
-      .update(holdingColumns(input))
-      .eq("user_id", userId)
-      .eq("card_id", cardId);
-
-    if (error) {
-      console.error("Error updating card in collection:", error);
-      throw error;
-    }
+    return this.addCopies(userId, cardId, "personal", location ?? "", quantity);
   },
 
-  // Remove card from collection
+  /** Removes the card from the collection entirely, every place included. */
   async removeCard(userId: string, cardId: string): Promise<void> {
     const { error } = await supabase
       .from("user_collections")
@@ -197,49 +258,68 @@ export const collectionService = {
     }
   },
 
-  // Check if user owns a specific card
-  async getCardOwnership(userId: string, cardId: string): Promise<CollectionItem | null> {
+  /** Removes one place, leaving the card's other places alone. */
+  async removeHolding(holdingId: string): Promise<void> {
+    const { error } = await supabase.from("user_collections").delete().eq("id", holdingId);
+    if (error) throw error;
+  },
+
+  /**
+   * Copies of one printing, per bucket — what deck building asks to decide
+   * whether a card is actually available to play.
+   */
+  async getCardOwnership(
+    userId: string,
+    cardId: string
+  ): Promise<{ personal: number; sale: number; loaned: number; total: number }> {
     const { data, error } = await supabase
       .from("user_collections")
-      .select("*")
+      .select("bucket, quantity")
       .eq("user_id", userId)
-      .eq("card_id", cardId)
-      .maybeSingle();
+      .eq("card_id", cardId);
 
     if (error) {
       console.error("Error checking card ownership:", error);
       throw error;
     }
 
-    return data;
+    const rows = data ?? [];
+    const of = (bucket: CollectionBucket) =>
+      rows.filter((r) => r.bucket === bucket).reduce((t, r) => t + r.quantity, 0);
+
+    return {
+      personal: of("personal"),
+      sale: of("sale"),
+      loaned: of("loaned"),
+      total: rows.reduce((t, r) => t + r.quantity, 0),
+    };
   },
 
-  // Bulk add cards (for importing collections)
-  async bulkAddCards(userId: string, cards: Array<{ cardId: string; quantity: number; location?: string }>): Promise<void> {
-    const items = cards.map(card => ({
-      user_id: userId,
-      card_id: card.cardId,
-      quantity: card.quantity,
-      location: card.location || null,
-      updated_at: new Date().toISOString(),
-    }));
-
-    const { error } = await supabase
-      .from("user_collections")
-      .upsert(items, {
-        onConflict: "user_id,card_id",
-      });
-
-    if (error) {
-      console.error("Error bulk adding cards:", error);
-      throw error;
+  async bulkAddCards(
+    userId: string,
+    cards: Array<{ cardId: string; quantity: number; location?: string; bucket?: CollectionBucket }>
+  ): Promise<void> {
+    for (const card of cards) {
+      await this.addCopies(
+        userId,
+        card.cardId,
+        card.bucket ?? "personal",
+        card.location ?? "",
+        card.quantity
+      );
     }
   },
 };
+
 // ------------------------------------------------------------------- sharing
 
 export type CollectionShare = Tables<"collection_shares">;
 
+/**
+ * What a guest sees. No locations and no borrower names: those are the owner's
+ * business, and a borrower did not agree to appear on a shared page. Quantities
+ * are totals summed across every place the owner keeps the card.
+ */
 export interface SharedHolding {
   card_id: string;
   card_name: string;
@@ -247,12 +327,16 @@ export interface SharedHolding {
   set_name: string | null;
   rarity: string;
   image_url: string | null;
+  card_type: string;
+  element: string | null;
+  cost: number | null;
+  power: number | null;
+  life: number | null;
+  speed: string | null;
+  effect_text: string | null;
   personal_quantity: number;
-  personal_location: string | null;
   sale_quantity: number;
-  sale_location: string | null;
   loaned_quantity: number;
-  loaned_to: string | null;
 }
 
 export interface SharedCollectionMeta {
