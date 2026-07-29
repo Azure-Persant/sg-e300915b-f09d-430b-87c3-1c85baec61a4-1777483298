@@ -9,10 +9,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { deckService, type DeckWithCards } from "@/services/deckService";
-import { cardService, type CardWithSet, type Set } from "@/services/cardService";
+import {
+  RARITY_LABELS,
+  cardService,
+  type CardWithSet,
+  type FilterOption,
+  type Set,
+} from "@/services/cardService";
 import { useAuth } from "@/hooks/useAuth";
 import { ArrowLeft, Plus, Minus, Search, Filter, Check, X, MapPin } from "lucide-react";
 import Link from "next/link";
+
+/** "LESSER BOON" -> "Lesser Boon", for the type dropdown labels. */
+const toTitleCase = (text: string): string =>
+  text
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
 
 export default function DeckDetailPage() {
   const router = useRouter();
@@ -27,7 +40,13 @@ export default function DeckDetailPage() {
   const [selectedSet, setSelectedSet] = useState<string>("all");
   const [selectedRarity, setSelectedRarity] = useState<string>("all");
   const [selectedType, setSelectedType] = useState<string>("all");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [cardPage, setCardPage] = useState(1);
+  const [cardPageCount, setCardPageCount] = useState(1);
+  const [cardTotal, setCardTotal] = useState(0);
+  const [typeOptions, setTypeOptions] = useState<FilterOption[]>([]);
   const [userCollection, setUserCollection] = useState<Map<string, { quantity: number; location?: string }>>(new Map());
+  const cardsPerPage = 60;
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -57,11 +76,16 @@ export default function DeckDetailPage() {
   const loadUserCollection = async () => {
     if (!user) return;
     try {
-      const [setsData, collectionData] = await Promise.all([
+      const [setsData, collectionData, filterOptions] = await Promise.all([
         cardService.getAllSets(),
         cardService.getUserCollection(user.id),
+        cardService.getFilterOptions(),
       ]);
-      setSets(setsData);
+      // Base expansions first, matching the precedence the card grid uses.
+      setSets(
+        setsData.slice().sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name))
+      );
+      setTypeOptions(filterOptions.types);
       
       const collectionMap = new Map();
       collectionData.forEach(card => {
@@ -81,24 +105,39 @@ export default function DeckDetailPage() {
 
   const loadAllCards = async () => {
     try {
-      const filters: any = {};
-      if (selectedSet !== "all") filters.setId = selectedSet;
-      if (selectedRarity !== "all") filters.rarity = selectedRarity;
-      if (selectedType !== "all") filters.cardType = selectedType;
-      if (search) filters.search = search;
-
-      const data = await cardService.getCards(filters);
-      setAllCards(data);
+      // One page from Postgres. This used to call getCards(), which loops until
+      // it has every matching printing — the entire catalog when no filter is
+      // set — and re-ran on every keystroke.
+      const { rows, total } = await cardService.getCardsPage({
+        page: cardPage,
+        pageSize: cardsPerPage,
+        search: debouncedSearch,
+        setId: selectedSet === "all" ? undefined : selectedSet,
+        rarity: selectedRarity === "all" ? undefined : selectedRarity,
+        type: selectedType === "all" ? undefined : selectedType,
+      });
+      setAllCards(rows);
+      setCardTotal(total);
+      setCardPageCount(Math.max(1, Math.ceil(total / cardsPerPage)));
     } catch (error) {
       console.error("Error loading cards:", error);
     }
   };
 
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    setCardPage(1);
+  }, [debouncedSearch, selectedSet, selectedRarity, selectedType]);
+
+  useEffect(() => {
     if (addCardDialogOpen) {
       loadAllCards();
     }
-  }, [addCardDialogOpen, search, selectedSet, selectedRarity, selectedType]);
+  }, [addCardDialogOpen, cardPage, debouncedSearch, selectedSet, selectedRarity, selectedType]);
 
   const handleAddCard = async (cardId: string, quantity: number = 1) => {
     if (!deck) return;
@@ -220,11 +259,14 @@ export default function DeckDetailPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Rarities</SelectItem>
-                          <SelectItem value="Common">Common</SelectItem>
-                          <SelectItem value="Uncommon">Uncommon</SelectItem>
-                          <SelectItem value="Rare">Rare</SelectItem>
-                          <SelectItem value="Super Rare">Super Rare</SelectItem>
-                          <SelectItem value="Ultra Rare">Ultra Rare</SelectItem>
+                          {/* Values are the codes stored in cards.rarity. The
+                              display names that used to be here could never
+                              match, so every rarity filter returned nothing. */}
+                          {Object.entries(RARITY_LABELS).map(([code, label]) => (
+                            <SelectItem key={code} value={code}>
+                              {label} ({code})
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <Select value={selectedType} onValueChange={setSelectedType}>
@@ -233,13 +275,47 @@ export default function DeckDetailPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Types</SelectItem>
-                          <SelectItem value="Champion">Champion</SelectItem>
-                          <SelectItem value="Regalia">Regalia</SelectItem>
-                          <SelectItem value="Action">Action</SelectItem>
-                          <SelectItem value="Attack">Attack</SelectItem>
-                          <SelectItem value="Ally">Ally</SelectItem>
+                          {/* Driven by public.card_filter_options, so all 15
+                              types appear rather than a hardcoded 5, and the
+                              values match cards.types exactly. */}
+                          {typeOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {toTitleCase(option.value)} ({option.count})
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <span>
+                        {cardTotal === 0
+                          ? "No printings match these filters"
+                          : `${cardTotal} printing${cardTotal === 1 ? "" : "s"} match`}
+                      </span>
+                      {cardPageCount > 1 && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={cardPage <= 1}
+                            onClick={() => setCardPage((p) => Math.max(1, p - 1))}
+                          >
+                            Previous
+                          </Button>
+                          <span>
+                            Page {cardPage} of {cardPageCount}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={cardPage >= cardPageCount}
+                            onClick={() => setCardPage((p) => Math.min(cardPageCount, p + 1))}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
