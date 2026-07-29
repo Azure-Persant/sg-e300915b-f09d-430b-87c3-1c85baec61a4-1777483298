@@ -357,45 +357,36 @@ export type Database = {
       }
       user_collections: {
         Row: {
+          bucket: string
           card_id: string
-          created_at: string | null
+          created_at: string
           id: string
-          location: string | null
-          loaned_quantity: number
-          loaned_to: string | null
           loaned_to_user_id: string | null
+          location: string
           quantity: number
-          sale_location: string | null
-          sale_quantity: number
-          updated_at: string | null
+          updated_at: string
           user_id: string
         }
         Insert: {
+          bucket: string
           card_id: string
-          created_at?: string | null
+          created_at?: string
           id?: string
-          location?: string | null
-          loaned_quantity?: number
-          loaned_to?: string | null
           loaned_to_user_id?: string | null
+          location?: string
           quantity?: number
-          sale_location?: string | null
-          sale_quantity?: number
-          updated_at?: string | null
+          updated_at?: string
           user_id: string
         }
         Update: {
+          bucket?: string
           card_id?: string
-          created_at?: string | null
+          created_at?: string
           id?: string
-          location?: string | null
-          loaned_quantity?: number
-          loaned_to?: string | null
           loaned_to_user_id?: string | null
+          location?: string
           quantity?: number
-          sale_location?: string | null
-          sale_quantity?: number
-          updated_at?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: [
@@ -472,12 +463,16 @@ export type Database = {
           set_name: string | null
           rarity: string
           image_url: string | null
+          card_type: string
+          element: string | null
+          cost: number | null
+          power: number | null
+          life: number | null
+          speed: string | null
+          effect_text: string | null
           personal_quantity: number
-          personal_location: string | null
           sale_quantity: number
-          sale_location: string | null
           loaned_quantity: number
-          loaned_to: string | null
         }[]
       }
       shared_collection_meta: {
