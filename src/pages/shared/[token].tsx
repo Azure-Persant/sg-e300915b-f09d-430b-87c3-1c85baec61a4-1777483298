@@ -4,6 +4,7 @@ import { Loader2, Package, Search } from "lucide-react";
 
 import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
+import { CardImage } from "@/components/CardImage";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -147,10 +148,10 @@ export default function SharedCollectionPage() {
                     >
                       <CardContent className="flex flex-wrap items-center gap-3 p-3">
                         {h.image_url && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
+                          <CardImage
                             src={h.image_url}
                             alt={h.card_name}
+                            variant="thumb"
                             className="h-16 w-auto rounded"
                           />
                         )}
@@ -201,11 +202,12 @@ export default function SharedCollectionPage() {
                 <div className="grid gap-6 md:grid-cols-2">
                   <div>
                     {openCard.image_url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <CardImage
                         src={openCard.image_url}
                         alt={openCard.card_name}
-                        className="w-full max-w-[380px] rounded-lg shadow-2xl"
+                        variant="detail"
+                        priority
+                        className="w-full max-w-[380px] h-auto rounded-lg shadow-2xl"
                       />
                     )}
                   </div>
