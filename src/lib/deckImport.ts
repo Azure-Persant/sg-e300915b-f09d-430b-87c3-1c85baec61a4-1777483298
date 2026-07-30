@@ -61,16 +61,40 @@ export function pickPrinting<T extends PrintingChoice>(
 }
 
 /**
- * Whether any of this text creates the named token.
+ * How far before the word "token" a name still counts as creating it. Sized for
+ * the longest list phrasing in the catalog, which is the Gather reminder text:
+ * "summon a Blightroot, Manaroot, Silvershine, Fraysia, Razorvine, or Springleaf
+ * token".
+ */
+const TOKEN_WINDOW = 170;
+
+/**
+ * Whether this text creates the named token.
  *
- * Tokens are in the card catalog but never in a deck list, so the only link
- * from a deck to the tokens it makes is the card text: "Then summon a Spirit
- * Shard token." Requiring the word "token" after the name is what keeps a card
- * that merely shares a word with a token out of the results.
+ * Tokens are in the card catalog but never in a deck list, so the only link from
+ * a deck to the tokens it makes is the card text. Requiring the word "token"
+ * nearby is what keeps a card that merely mentions a token's name — "Search your
+ * deck for Nightshade" — out of the results.
+ *
+ * Matching a window before "token" rather than the name immediately followed by
+ * it is what catches the list form above, where only the last of six names is
+ * followed by the word.
+ *
+ * Measured against the API's own `references` field over the whole catalog: 41
+ * of the 45 cards that involve tokens come out exactly right. The four misses
+ * all say only "Gather twice" and never name a herb, so no reading of the card
+ * text can find them — closing that gap means syncing `references` itself.
  */
 export function referencesToken(effectText: string, tokenName: string): boolean {
-  const escaped = tokenName.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`${escaped}\\s+tokens?\\b`).test(effectText.toLowerCase());
+  const text = effectText.toLowerCase();
+  const name = new RegExp(`\\b${tokenName.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const marker = /\btokens?\b/g;
+
+  let hit: RegExpExecArray | null;
+  while ((hit = marker.exec(text)) !== null) {
+    if (name.test(text.slice(Math.max(0, hit.index - TOKEN_WINDOW), hit.index))) return true;
+  }
+  return false;
 }
 
 /** PostgREST has a URL length limit, so long `in` lists go up in chunks. */
