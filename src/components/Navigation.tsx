@@ -23,7 +23,7 @@ export function Navigation() {
           <Link href="/" className="flex items-center gap-2 font-heading font-bold text-xl">
             <Layers className="h-6 w-6 text-primary" />
             <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-              GA Collector
+              Azure Card Inventory (Beta)
             </span>
           </Link>
 
