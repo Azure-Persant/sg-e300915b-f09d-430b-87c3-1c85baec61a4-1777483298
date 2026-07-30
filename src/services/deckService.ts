@@ -1,36 +1,100 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
+import type { Tables, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
+import {
+  asDeckSection,
+  type DeckListEntry,
+  type DeckSection,
+} from "@/lib/deckList";
+import { chunk, looseKey, pickPrinting, referencesToken } from "@/lib/deckImport";
 
 export type Deck = Tables<"decks">;
 export type DeckCard = Tables<"deck_cards">;
 
+/** A deck card with the printing it points at, as every deck view needs both. */
+export interface DeckCardWithCard extends Omit<DeckCard, "section"> {
+  section: DeckSection;
+  cards: Tables<"cards"> & { sets: Tables<"sets"> | null };
+}
+
 export interface DeckWithCards extends Deck {
-  deck_cards: Array<
-    DeckCard & {
-      cards: Tables<"cards"> & {
-        sets: Tables<"sets"> | null;
-      };
-    }
-  >;
+  deck_cards: DeckCardWithCard[];
+}
+
+/** The chosen art, embedded on the deck list so tiles need no second query. */
+export interface DeckCover {
+  id: string;
+  name: string;
+  image_url: string | null;
+}
+
+export interface DeckSummary extends Deck {
+  cover: DeckCover | null;
+}
+
+/** One printing offered as deck art. */
+export interface ArtOption {
+  id: string;
+  name: string;
+  image_url: string;
+  card_number: string;
+  set_code: string | null;
+  set_name: string | null;
+}
+
+export interface ArtGroup {
+  name: string;
+  /** Token groups are separated because tokens are never in the deck itself. */
+  kind: "deck" | "token";
+  options: ArtOption[];
+}
+
+export interface ImportResult {
+  /** Distinct printings written. */
+  matched: number;
+  /** Total copies written. */
+  copies: number;
+  /** Names with no printing in the catalog, in the order they were listed. */
+  unmatched: string[];
+}
+
+// Columns needed to pick between printings and render them. Kept as one string
+// literal: concatenating it defeats supabase-js's type inference.
+const PRINTING_PICK_COLUMNS =
+  "id, name, card_number, image_url, rarity, set_id, sets(code, name, rank)";
+
+/** Shape returned by PRINTING_PICK_COLUMNS. */
+interface PrintingRow {
+  id: string;
+  name: string;
+  card_number: string;
+  image_url: string | null;
+  rarity: string;
+  set_id: string;
+  sets: { code: string; name: string; rank: number } | null;
 }
 
 export const deckService = {
-  async getUserDecks(userId: string) {
+  /**
+   * The deck list screen. The cover printing is embedded rather than fetched
+   * per tile, and the foreign key is named explicitly because decks has more
+   * than one path to cards once the cover column exists.
+   */
+  async getUserDecks(userId: string): Promise<DeckSummary[]> {
     const { data, error } = await supabase
       .from("decks")
-      .select("*")
+      .select("*, cover:cards!decks_cover_card_id_fkey(id, name, image_url)")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false });
 
-    console.log("getUserDecks:", { data, error });
     if (error) throw error;
-    return data || [];
+    return (data ?? []) as unknown as DeckSummary[];
   },
 
-  async getDeckById(deckId: string) {
+  async getDeckById(deckId: string): Promise<DeckWithCards> {
     const { data, error } = await supabase
       .from("decks")
-      .select(`
+      .select(
+        `
         *,
         deck_cards(
           *,
@@ -39,96 +103,457 @@ export const deckService = {
             sets(*)
           )
         )
-      `)
+      `
+      )
       .eq("id", deckId)
       .single();
 
-    console.log("getDeckById:", { data, error });
     if (error) throw error;
-    return data as DeckWithCards;
+
+    // section is a plain text column in Postgres, so narrow it once here rather
+    // than defending against unknown strings at every call site.
+    const deck = data as unknown as DeckWithCards;
+    deck.deck_cards = (deck.deck_cards ?? []).map((row) => ({
+      ...row,
+      section: asDeckSection(row.section),
+    }));
+    return deck;
   },
 
-  async createDeck(userId: string, name: string, description?: string) {
-    const { data, error } = await supabase
-      .from("decks")
-      .insert({
-        user_id: userId,
-        name,
-        description: description || null,
-      })
-      .select()
-      .single();
+  async createDeck(userId: string, name: string, description?: string): Promise<Deck> {
+    const payload: TablesInsert<"decks"> = {
+      user_id: userId,
+      name,
+      description: description || null,
+    };
 
-    console.log("createDeck:", { data, error });
+    const { data, error } = await supabase.from("decks").insert(payload).select().single();
     if (error) throw error;
     return data;
   },
 
-  async updateDeck(deckId: string, updates: { name?: string; description?: string }) {
+  async updateDeck(
+    deckId: string,
+    updates: { name?: string; description?: string | null }
+  ): Promise<Deck> {
+    const payload: TablesUpdate<"decks"> = updates;
     const { data, error } = await supabase
       .from("decks")
-      .update(updates)
+      .update(payload)
       .eq("id", deckId)
       .select()
       .single();
 
-    console.log("updateDeck:", { data, error });
     if (error) throw error;
     return data;
   },
 
-  async deleteDeck(deckId: string) {
-    const { error } = await supabase
-      .from("decks")
-      .delete()
-      .eq("id", deckId);
-
-    console.log("deleteDeck:", { error });
+  async deleteDeck(deckId: string): Promise<void> {
+    const { error } = await supabase.from("decks").delete().eq("id", deckId);
     if (error) throw error;
   },
 
-  async addCardToDeck(deckId: string, cardId: string, quantity: number) {
-    const { data, error } = await supabase
-      .from("deck_cards")
-      .upsert({
-        deck_id: deckId,
-        card_id: cardId,
-        quantity,
-      })
-      .select()
-      .single();
-
-    console.log("addCardToDeck:", { data, error });
-    if (error) throw error;
-    return data;
-  },
-
-  async removeCardFromDeck(deckId: string, cardId: string) {
-    const { error } = await supabase
-      .from("deck_cards")
-      .delete()
-      .eq("deck_id", deckId)
-      .eq("card_id", cardId);
-
-    console.log("removeCardFromDeck:", { error });
+  /** Pass null to fall back to the placeholder on the deck list. */
+  async setCoverCard(deckId: string, cardId: string | null): Promise<void> {
+    const payload: TablesUpdate<"decks"> = { cover_card_id: cardId };
+    const { error } = await supabase.from("decks").update(payload).eq("id", deckId);
     if (error) throw error;
   },
 
-  async updateDeckCard(deckId: string, cardId: string, quantity: number) {
-    if (quantity === 0) {
-      return this.removeCardFromDeck(deckId, cardId);
-    }
-
-    const { data, error } = await supabase
+  /**
+   * Add copies, or raise the count if the printing is already in that section.
+   * The same printing in the main deck and the sideboard are separate rows, so
+   * the conflict target has to include the section.
+   */
+  async addCardToDeck(
+    deckId: string,
+    cardId: string,
+    quantity: number,
+    section: DeckSection = "main"
+  ): Promise<void> {
+    const { data: existing, error: readError } = await supabase
       .from("deck_cards")
-      .update({ quantity })
+      .select("id, quantity")
       .eq("deck_id", deckId)
       .eq("card_id", cardId)
-      .select()
+      .eq("section", section)
+      .maybeSingle();
+
+    if (readError) throw readError;
+
+    if (existing) {
+      await this.updateDeckCard(deckId, cardId, existing.quantity + quantity, section);
+      return;
+    }
+
+    const payload: TablesInsert<"deck_cards"> = {
+      deck_id: deckId,
+      card_id: cardId,
+      quantity,
+      section,
+    };
+    const { error } = await supabase.from("deck_cards").insert(payload);
+    if (error) throw error;
+
+    await this.touch(deckId);
+  },
+
+  async updateDeckCard(
+    deckId: string,
+    cardId: string,
+    quantity: number,
+    section: DeckSection = "main"
+  ): Promise<void> {
+    if (quantity <= 0) {
+      return this.removeCardFromDeck(deckId, cardId, section);
+    }
+
+    const payload: TablesUpdate<"deck_cards"> = { quantity };
+    const { error } = await supabase
+      .from("deck_cards")
+      .update(payload)
+      .eq("deck_id", deckId)
+      .eq("card_id", cardId)
+      .eq("section", section);
+
+    if (error) throw error;
+    await this.touch(deckId);
+  },
+
+  async removeCardFromDeck(
+    deckId: string,
+    cardId: string,
+    section: DeckSection = "main"
+  ): Promise<void> {
+    const { error } = await supabase
+      .from("deck_cards")
+      .delete()
+      .eq("deck_id", deckId)
+      .eq("card_id", cardId)
+      .eq("section", section);
+
+    if (error) throw error;
+    await this.touch(deckId);
+  },
+
+  /**
+   * Move a printing between lists. Done as delete-then-add rather than an
+   * update, because the destination may already hold that printing, in which
+   * case the two rows have to merge instead of colliding with the unique index.
+   */
+  async moveCardSection(
+    deckId: string,
+    cardId: string,
+    from: DeckSection,
+    to: DeckSection,
+    quantity: number
+  ): Promise<void> {
+    if (from === to) return;
+    await this.removeCardFromDeck(deckId, cardId, from);
+    await this.addCardToDeck(deckId, cardId, quantity, to);
+  },
+
+  /**
+   * Resolve pasted names to printings and write them.
+   *
+   * `replace` is the right default for pasting a whole list: the text is the
+   * deck. Adding instead is for pulling a sideboard or a second list into an
+   * existing deck.
+   */
+  async importDeckList(
+    deckId: string,
+    userId: string,
+    entries: DeckListEntry[],
+    options: { replace: boolean }
+  ): Promise<ImportResult> {
+    const names = [...new Set(entries.map((entry) => entry.name))];
+    if (names.length === 0) {
+      return { matched: 0, copies: 0, unmatched: [] };
+    }
+
+    const [byName, owned] = await Promise.all([
+      this.findPrintingsByNames(names),
+      this.ownedCardIds(userId),
+    ]);
+
+    // Merge duplicate lines — a list can name the same card twice in one
+    // section — before resolving, so the unique index is never the thing that
+    // reports it.
+    const wanted = new Map<string, { card_id: string; quantity: number; section: DeckSection }>();
+    const unmatched: string[] = [];
+
+    for (const entry of entries) {
+      const candidates = byName.get(looseKey(entry.name));
+      const printing = candidates ? pickPrinting(candidates, entry, owned) : null;
+
+      if (!printing) {
+        if (!unmatched.includes(entry.name)) unmatched.push(entry.name);
+        continue;
+      }
+
+      const key = `${printing.id}:${entry.section}`;
+      const already = wanted.get(key);
+      if (already) {
+        already.quantity += entry.quantity;
+      } else {
+        wanted.set(key, {
+          card_id: printing.id,
+          quantity: entry.quantity,
+          section: entry.section,
+        });
+      }
+    }
+
+    const rows: TablesInsert<"deck_cards">[] = [...wanted.values()].map((row) => ({
+      deck_id: deckId,
+      card_id: row.card_id,
+      quantity: row.quantity,
+      section: row.section,
+    }));
+
+    if (options.replace) {
+      const { error } = await supabase.from("deck_cards").delete().eq("deck_id", deckId);
+      if (error) throw error;
+    }
+
+    if (rows.length) {
+      // onConflict covers the add path, where the printing may already be in
+      // that section; the pasted quantity wins.
+      const { error } = await supabase
+        .from("deck_cards")
+        .upsert(rows, { onConflict: "deck_id,card_id,section" });
+      if (error) throw error;
+    }
+
+    await this.ensureCover(deckId);
+    await this.touch(deckId);
+
+    return {
+      matched: rows.length,
+      copies: rows.reduce((total, row) => total + (row.quantity ?? 0), 0),
+      unmatched,
+    };
+  },
+
+  /**
+   * Every printing of each named card, keyed by a loose form of the name.
+   *
+   * Exact matching happens in Postgres. Names it misses are retried one at a
+   * time with ilike, which catches the case differences that come from hand-
+   * typed lists without risking a wrong match the way a wildcard would.
+   */
+  async findPrintingsByNames(names: string[]): Promise<Map<string, PrintingRow[]>> {
+    const byName = new Map<string, PrintingRow[]>();
+
+    const add = (rows: PrintingRow[]) => {
+      for (const row of rows) {
+        const key = looseKey(row.name);
+        const list = byName.get(key);
+        if (list) list.push(row);
+        else byName.set(key, [row]);
+      }
+    };
+
+    for (const group of chunk(names, 40)) {
+      const { data, error } = await supabase
+        .from("cards")
+        .select(PRINTING_PICK_COLUMNS)
+        .in("name", group);
+      if (error) throw error;
+      add((data ?? []) as unknown as PrintingRow[]);
+    }
+
+    const missing = names.filter((name) => !byName.has(looseKey(name)));
+    // Capped so a list of nonsense cannot fan out into hundreds of requests.
+    for (const group of chunk(missing.slice(0, 40), 8)) {
+      const results = await Promise.all(
+        group.map((name) =>
+          supabase.from("cards").select(PRINTING_PICK_COLUMNS).ilike("name", name)
+        )
+      );
+      for (const { data, error } of results) {
+        if (error) throw error;
+        add((data ?? []) as unknown as PrintingRow[]);
+      }
+    }
+
+    return byName;
+  },
+
+  /** Printings the user holds anywhere — any bucket, any location. */
+  async ownedCardIds(userId: string): Promise<Set<string>> {
+    const { data, error } = await supabase
+      .from("user_collections")
+      .select("card_id")
+      .eq("user_id", userId);
+
+    if (error) throw error;
+    return new Set((data ?? []).map((row) => row.card_id));
+  },
+
+  /**
+   * Art to choose between: every printing of every card in the deck, plus the
+   * tokens the deck makes.
+   *
+   * Tokens are in the catalog but never in a deck list, so they are found by
+   * looking for "<name> token" in the effect text of the deck's own cards —
+   * the phrasing the card text actually uses ("summon a Spirit Shard token").
+   */
+  async getArtOptions(deckId: string): Promise<ArtGroup[]> {
+    const { data: deckCards, error } = await supabase
+      .from("deck_cards")
+      .select("card_id, cards(name, effect_text)")
+      .eq("deck_id", deckId);
+
+    if (error) throw error;
+
+    const rows = (deckCards ?? []) as unknown as Array<{
+      card_id: string;
+      cards: { name: string; effect_text: string | null } | null;
+    }>;
+
+    const names = [...new Set(rows.map((row) => row.cards?.name).filter(Boolean) as string[])];
+    if (names.length === 0) return [];
+
+    const effectText = rows
+      .map((row) => row.cards?.effect_text ?? "")
+      .join("\n")
+      .toLowerCase();
+
+    const [deckPrintings, tokenPrintings] = await Promise.all([
+      this.printingsForNames(names),
+      this.tokenPrintings(),
+    ]);
+
+    const groups: ArtGroup[] = [];
+
+    const groupBy = (printings: ArtOption[], kind: ArtGroup["kind"]) => {
+      const byCard = new Map<string, ArtOption[]>();
+      for (const option of printings) {
+        const list = byCard.get(option.name);
+        if (list) list.push(option);
+        else byCard.set(option.name, [option]);
+      }
+      for (const name of [...byCard.keys()].sort((a, b) => a.localeCompare(b))) {
+        groups.push({ name, kind, options: byCard.get(name)! });
+      }
+    };
+
+    groupBy(deckPrintings, "deck");
+
+    const referenced = tokenPrintings.filter((option) =>
+      referencesToken(effectText, option.name)
+    );
+    groupBy(referenced, "token");
+
+    return groups;
+  },
+
+  /** Every printing with art for the given card names. */
+  async printingsForNames(names: string[]): Promise<ArtOption[]> {
+    const out: ArtOption[] = [];
+
+    for (const group of chunk(names, 40)) {
+      const { data, error } = await supabase
+        .from("cards")
+        .select("id, name, card_number, image_url, sets(code, name)")
+        .in("name", group)
+        .not("image_url", "is", null)
+        .order("name");
+
+      if (error) throw error;
+      out.push(...toArtOptions(data));
+    }
+
+    return out;
+  },
+
+  /**
+   * Every token printing in the catalog. There are only a few dozen tokens, so
+   * this is one small query rather than a filter per deck card.
+   */
+  async tokenPrintings(): Promise<ArtOption[]> {
+    const { data, error } = await supabase
+      .from("cards")
+      .select("id, name, card_number, image_url, sets(code, name)")
+      .contains("types", ["TOKEN"])
+      .not("image_url", "is", null)
+      .order("name");
+
+    if (error) throw error;
+    return toArtOptions(data);
+  },
+
+  /**
+   * Give a deck art if it has none, so an imported deck shows something on the
+   * deck list without the owner having to pick. The material deck leads with
+   * the champion, which is the card people recognise the deck by.
+   */
+  async ensureCover(deckId: string): Promise<void> {
+    const { data: deck, error: deckError } = await supabase
+      .from("decks")
+      .select("cover_card_id")
+      .eq("id", deckId)
       .single();
 
-    console.log("updateDeckCard:", { data, error });
+    if (deckError) throw deckError;
+    if (deck?.cover_card_id) return;
+
+    const { data, error } = await supabase
+      .from("deck_cards")
+      .select("card_id, section, cards(image_url)")
+      .eq("deck_id", deckId);
+
     if (error) throw error;
-    return data;
+
+    const rows = (data ?? []) as unknown as Array<{
+      card_id: string;
+      section: string;
+      cards: { image_url: string | null } | null;
+    }>;
+
+    const withArt = rows.filter((row) => row.cards?.image_url);
+    const first =
+      withArt.find((row) => asDeckSection(row.section) === "material") ??
+      withArt.find((row) => asDeckSection(row.section) === "main") ??
+      withArt[0];
+
+    if (first) await this.setCoverCard(deckId, first.card_id);
+  },
+
+  /**
+   * deck_cards changes do not touch the deck row, so the "last updated" the
+   * deck list sorts by would stand still while the deck was being built. The
+   * decks_set_updated_at trigger overwrites the value; sending it is just what
+   * makes the UPDATE happen.
+   */
+  async touch(deckId: string): Promise<void> {
+    const payload: TablesUpdate<"decks"> = { updated_at: new Date().toISOString() };
+    const { error } = await supabase.from("decks").update(payload).eq("id", deckId);
+    if (error) throw error;
   },
 };
+
+/** Rows with art, flattened into the shape the picker renders. */
+function toArtOptions(
+  data:
+    | Array<{
+        id: string;
+        name: string;
+        card_number: string;
+        image_url: string | null;
+        sets: { code: string; name: string } | null;
+      }>
+    | null
+): ArtOption[] {
+  return (data ?? [])
+    .filter((row) => !!row.image_url)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      image_url: row.image_url as string,
+      card_number: row.card_number,
+      set_code: row.sets?.code ?? null,
+      set_name: row.sets?.name ?? null,
+    }));
+}
