@@ -241,16 +241,22 @@ export default function DecksPage() {
                   key={deck.id}
                   className="overflow-hidden border-slate-700 bg-slate-800/50 transition-colors hover:border-cyan-500/60"
                 >
-                  {/* The chosen card's art, cropped to a banner. Card art is
-                      portrait and the illustration sits in the upper half, so
-                      the crop is pinned to the top rather than centred. */}
-                  <div className="relative h-40 overflow-hidden bg-slate-900">
+                  {/* The chosen card's art, cropped to the illustration.
+
+                      A card image is 2.5 x 3.5 inches of which the artwork
+                      occupies roughly the band from 13% to 67% of the height —
+                      below the level and name bar, above the text box. Pinning
+                      the crop to the top showed the name bar and a sliver of
+                      art instead; 28% down a 4:3 window lands on that band.
+                      Both numbers are geometry, so they hold at any tile
+                      width. */}
+                  <div className="relative aspect-[4/3] overflow-hidden bg-slate-900">
                     {deck.cover?.image_url ? (
                       <CardImage
                         src={deck.cover.image_url}
                         alt={deck.cover.name}
                         variant="tile"
-                        className="h-full w-full object-cover object-top"
+                        className="h-full w-full object-cover object-[center_28%]"
                       />
                     ) : (
                       <div className="flex h-full items-center justify-center">
