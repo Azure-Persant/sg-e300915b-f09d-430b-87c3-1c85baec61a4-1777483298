@@ -60,6 +60,11 @@ export function Navigation() {
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
+                  <Link href="/profile" className="cursor-pointer">
+                    Profile
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
                   <Link href="/collection" className="cursor-pointer">
                     <BookOpen className="mr-2 h-4 w-4" />
                     My Collection
@@ -110,6 +115,11 @@ export function Navigation() {
             </Button>
             {user ? (
               <>
+                <Button variant="ghost" className="justify-start" asChild>
+                  <Link href="/profile" onClick={() => setMobileMenuOpen(false)}>
+                    Profile
+                  </Link>
+                </Button>
                 <Button variant="ghost" className="justify-start" asChild>
                   <Link href="/collection" onClick={() => setMobileMenuOpen(false)}>
                     My Collection
