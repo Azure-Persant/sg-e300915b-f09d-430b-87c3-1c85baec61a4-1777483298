@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
+import { CardImage } from "@/components/CardImage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -287,9 +288,10 @@ export default function CardsPage() {
                       <CardContent className="p-0">
                         <div className="relative">
                           {card.image_url && (
-                            <img
+                            <CardImage
                               src={card.image_url}
-                              alt={card.name}
+                              alt={card.name ?? "Card"}
+                              variant="tile"
                               className="w-full h-auto group-hover:scale-105 transition-transform duration-200"
                             />
                           )}
@@ -398,10 +400,12 @@ export default function CardsPage() {
                   {/* Left: Card Image with Printing Selector Below */}
                   <div className="flex flex-col items-center justify-start gap-4">
                     {currentCard.image_url && (
-                      <img
+                      <CardImage
                         src={currentCard.image_url}
                         alt={currentCard.name}
-                        className="w-[95%] max-w-[380px] rounded-lg shadow-2xl"
+                        variant="detail"
+                        priority
+                        className="w-[95%] max-w-[380px] h-auto rounded-lg shadow-2xl"
                       />
                     )}
                     {hasMultiplePrintings && (
