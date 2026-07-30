@@ -39,6 +39,16 @@ export interface PlaceInput {
   loanedToUserId?: string | null;
 }
 
+/** What a user holds of one printing, summed across its locations. */
+export interface CardOwnership {
+  personal: number;
+  sale: number;
+  loaned: number;
+  total: number;
+  /** Distinct place names holding this card, owner-only information. */
+  locations: string[];
+}
+
 export interface CollectionStats {
   /** Distinct printings held, counting a card once however many places it sits in. */
   uniqueCards: number;
@@ -262,6 +272,44 @@ export const collectionService = {
   async removeHolding(holdingId: string): Promise<void> {
     const { error } = await supabase.from("user_collections").delete().eq("id", holdingId);
     if (error) throw error;
+  },
+
+  /**
+   * Per-bucket counts for every printing the user holds, keyed by card id.
+   *
+   * For a whole deck at once. getHoldings would do, but it embeds cards(*) for
+   * every row, which is the entire catalog's worth of columns for a large
+   * collection when all a deck needs is the quantities.
+   */
+  async getOwnershipMap(userId: string): Promise<Map<string, CardOwnership>> {
+    const { data, error } = await supabase
+      .from("user_collections")
+      .select("card_id, bucket, location, quantity")
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Error fetching ownership:", error);
+      throw error;
+    }
+
+    const map = new Map<string, CardOwnership>();
+
+    for (const row of data ?? []) {
+      const bucket = row.bucket as CollectionBucket;
+      const current =
+        map.get(row.card_id) ??
+        ({ personal: 0, sale: 0, loaned: 0, total: 0, locations: [] } as CardOwnership);
+
+      current[bucket] += row.quantity;
+      current.total += row.quantity;
+
+      const place = normaliseLocation(row.location);
+      if (place && !current.locations.includes(place)) current.locations.push(place);
+
+      map.set(row.card_id, current);
+    }
+
+    return map;
   },
 
   /**
