@@ -189,6 +189,7 @@ export type Database = {
           deck_id: string
           id: string
           quantity: number
+          section: string
         }
         Insert: {
           card_id: string
@@ -196,6 +197,7 @@ export type Database = {
           deck_id: string
           id?: string
           quantity?: number
+          section?: string
         }
         Update: {
           card_id?: string
@@ -203,6 +205,7 @@ export type Database = {
           deck_id?: string
           id?: string
           quantity?: number
+          section?: string
         }
         Relationships: [
           {
@@ -223,6 +226,7 @@ export type Database = {
       }
       decks: {
         Row: {
+          cover_card_id: string | null
           created_at: string | null
           description: string | null
           id: string
@@ -232,6 +236,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          cover_card_id?: string | null
           created_at?: string | null
           description?: string | null
           id?: string
@@ -241,6 +246,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          cover_card_id?: string | null
           created_at?: string | null
           description?: string | null
           id?: string
@@ -250,6 +256,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "decks_cover_card_id_fkey"
+            columns: ["cover_card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "decks_user_id_fkey"
             columns: ["user_id"]
