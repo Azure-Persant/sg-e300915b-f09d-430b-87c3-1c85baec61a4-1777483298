@@ -6,6 +6,7 @@ import {
   type DeckSection,
 } from "@/lib/deckList";
 import { chunk, looseKey, pickPrinting, referencesToken } from "@/lib/deckImport";
+import { sectionForCard } from "@/lib/deckRules";
 
 export type Deck = Tables<"decks">;
 export type DeckCard = Tables<"deck_cards">;
@@ -59,8 +60,10 @@ export interface ImportResult {
 
 // Columns needed to pick between printings and render them. Kept as one string
 // literal: concatenating it defeats supabase-js's type inference.
+// types is here because the section a card goes to is derived from it, not asked
+// for: champions and regalia are material deck cards.
 const PRINTING_PICK_COLUMNS =
-  "id, name, card_number, image_url, rarity, set_id, sets(code, name, rank)";
+  "id, name, card_number, image_url, rarity, types, set_id, sets(code, name, rank)";
 
 /** Shape returned by PRINTING_PICK_COLUMNS. */
 interface PrintingRow {
@@ -69,8 +72,65 @@ interface PrintingRow {
   card_number: string;
   image_url: string | null;
   rarity: string;
+  types: string[];
   set_id: string;
   sets: { code: string; name: string; rank: number } | null;
+}
+
+/**
+ * Every printing of each named card, keyed by a loose form of the name.
+ *
+ * Exact matching happens in Postgres. Names it misses are retried one at a
+ * time with ilike, which catches the case differences that come from hand-
+ * typed lists without risking a wrong match the way a wildcard would.
+ */
+async function findPrintingsByNames(names: string[]): Promise<Map<string, PrintingRow[]>> {
+  const byName = new Map<string, PrintingRow[]>();
+
+  const add = (rows: PrintingRow[]) => {
+    for (const row of rows) {
+      const key = looseKey(row.name);
+      const list = byName.get(key);
+      if (list) list.push(row);
+      else byName.set(key, [row]);
+    }
+  };
+
+  for (const group of chunk(names, 40)) {
+    const { data, error } = await supabase
+      .from("cards")
+      .select(PRINTING_PICK_COLUMNS)
+      .in("name", group);
+    if (error) throw error;
+    add((data ?? []) as unknown as PrintingRow[]);
+  }
+
+  const missing = names.filter((name) => !byName.has(looseKey(name)));
+  // Capped so a list of nonsense cannot fan out into hundreds of requests.
+  for (const group of chunk(missing.slice(0, 40), 8)) {
+    const results = await Promise.all(
+      group.map((name) =>
+        supabase.from("cards").select(PRINTING_PICK_COLUMNS).ilike("name", name)
+      )
+    );
+    for (const { data, error } of results) {
+      if (error) throw error;
+      add((data ?? []) as unknown as PrintingRow[]);
+    }
+  }
+
+  return byName;
+}
+
+/** Printings the user holds anywhere — any bucket, any location. */
+async function ownedCardIds(userId: string): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("user_collections")
+    .select("card_id")
+    .eq("user_id", userId);
+
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => row.card_id));
 }
 
 export const deckService = {
@@ -237,20 +297,79 @@ export const deckService = {
   },
 
   /**
-   * Move a printing between lists. Done as delete-then-add rather than an
-   * update, because the destination may already hold that printing, in which
-   * case the two rows have to merge instead of colliding with the unique index.
+   * Move some copies between the main deck and the sideboard.
+   *
+   * Partial by design — swapping two of four copies into the sideboard is a
+   * normal thing to do. Written as remove-then-add rather than an update of the
+   * section, because the destination may already hold that printing, in which
+   * case the rows have to merge instead of colliding with the unique index.
    */
-  async moveCardSection(
+  async moveCopies(
     deckId: string,
     cardId: string,
     from: DeckSection,
     to: DeckSection,
-    quantity: number
+    copies: number,
+    heldInFrom: number
   ): Promise<void> {
-    if (from === to) return;
-    await this.removeCardFromDeck(deckId, cardId, from);
-    await this.addCardToDeck(deckId, cardId, quantity, to);
+    if (from === to || copies < 1) return;
+
+    const moving = Math.min(copies, heldInFrom);
+    if (moving >= heldInFrom) {
+      await this.removeCardFromDeck(deckId, cardId, from);
+    } else {
+      await this.updateDeckCard(deckId, cardId, heldInFrom - moving, from);
+    }
+
+    await this.addCardToDeck(deckId, cardId, moving, to);
+  },
+
+  /**
+   * Swap one printing of a card for another — a different art of the same card,
+   * keeping the deck's count.
+   *
+   * Merges rather than colliding if the deck already holds the target printing
+   * in that section, which is what happens when someone consolidates two arts
+   * back into one.
+   */
+  async swapPrinting(
+    deckId: string,
+    section: DeckSection,
+    fromCardId: string,
+    toCardId: string
+  ): Promise<void> {
+    if (fromCardId === toCardId) return;
+
+    const { data: existing, error } = await supabase
+      .from("deck_cards")
+      .select("quantity")
+      .eq("deck_id", deckId)
+      .eq("card_id", fromCardId)
+      .eq("section", section)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!existing) return;
+
+    await this.removeCardFromDeck(deckId, fromCardId, section);
+    await this.addCardToDeck(deckId, toCardId, existing.quantity, section);
+
+    // The old printing may have been the deck's art. Point it at the new one
+    // rather than leaving the deck showing a card it no longer contains.
+    const { data: deck } = await supabase
+      .from("decks")
+      .select("cover_card_id")
+      .eq("id", deckId)
+      .maybeSingle();
+
+    if (deck?.cover_card_id === fromCardId) {
+      await this.setCoverCard(deckId, toCardId);
+    }
+  },
+
+  /** Every printing of one card, for the per-card art picker. */
+  async printingsForCardName(name: string): Promise<ArtOption[]> {
+    return this.printingsForNames([name]);
   },
 
   /**
@@ -272,8 +391,8 @@ export const deckService = {
     }
 
     const [byName, owned] = await Promise.all([
-      this.findPrintingsByNames(names),
-      this.ownedCardIds(userId),
+      findPrintingsByNames(names),
+      ownedCardIds(userId),
     ]);
 
     // Merge duplicate lines — a list can name the same card twice in one
@@ -291,7 +410,11 @@ export const deckService = {
         continue;
       }
 
-      const key = `${printing.id}:${entry.section}`;
+      // The heading is a hint, not the answer: a champion or regalia is a
+      // material deck card wherever the list happened to put it.
+      const section = sectionForCard(printing.types, entry.section);
+
+      const key = `${printing.id}:${section}`;
       const already = wanted.get(key);
       if (already) {
         already.quantity += entry.quantity;
@@ -299,7 +422,7 @@ export const deckService = {
         wanted.set(key, {
           card_id: printing.id,
           quantity: entry.quantity,
-          section: entry.section,
+          section,
         });
       }
     }
@@ -333,62 +456,6 @@ export const deckService = {
       copies: rows.reduce((total, row) => total + (row.quantity ?? 0), 0),
       unmatched,
     };
-  },
-
-  /**
-   * Every printing of each named card, keyed by a loose form of the name.
-   *
-   * Exact matching happens in Postgres. Names it misses are retried one at a
-   * time with ilike, which catches the case differences that come from hand-
-   * typed lists without risking a wrong match the way a wildcard would.
-   */
-  async findPrintingsByNames(names: string[]): Promise<Map<string, PrintingRow[]>> {
-    const byName = new Map<string, PrintingRow[]>();
-
-    const add = (rows: PrintingRow[]) => {
-      for (const row of rows) {
-        const key = looseKey(row.name);
-        const list = byName.get(key);
-        if (list) list.push(row);
-        else byName.set(key, [row]);
-      }
-    };
-
-    for (const group of chunk(names, 40)) {
-      const { data, error } = await supabase
-        .from("cards")
-        .select(PRINTING_PICK_COLUMNS)
-        .in("name", group);
-      if (error) throw error;
-      add((data ?? []) as unknown as PrintingRow[]);
-    }
-
-    const missing = names.filter((name) => !byName.has(looseKey(name)));
-    // Capped so a list of nonsense cannot fan out into hundreds of requests.
-    for (const group of chunk(missing.slice(0, 40), 8)) {
-      const results = await Promise.all(
-        group.map((name) =>
-          supabase.from("cards").select(PRINTING_PICK_COLUMNS).ilike("name", name)
-        )
-      );
-      for (const { data, error } of results) {
-        if (error) throw error;
-        add((data ?? []) as unknown as PrintingRow[]);
-      }
-    }
-
-    return byName;
-  },
-
-  /** Printings the user holds anywhere — any bucket, any location. */
-  async ownedCardIds(userId: string): Promise<Set<string>> {
-    const { data, error } = await supabase
-      .from("user_collections")
-      .select("card_id")
-      .eq("user_id", userId);
-
-    if (error) throw error;
-    return new Set((data ?? []).map((row) => row.card_id));
   },
 
   /**
