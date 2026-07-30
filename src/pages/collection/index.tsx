@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
+import { CardImage } from "@/components/CardImage";
 import { CollectionShares } from "@/components/CollectionShares";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -431,10 +432,11 @@ export default function CollectionPage() {
                         onClick={() => handleCardClick(group.representativeCard)}
                       >
                         {group.representativeCard.image_url && (
-                          <img
+                          <CardImage
                             src={group.representativeCard.image_url}
                             alt={group.cardName}
-                            className="w-full rounded hover:scale-105 transition-transform"
+                            variant="tile"
+                            className="w-full h-auto rounded hover:scale-105 transition-transform"
                           />
                         )}
                       </div>
@@ -664,10 +666,12 @@ export default function CollectionPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
                 <div className="flex flex-col items-center justify-start gap-4">
                   {currentCard.image_url && (
-                    <img
+                    <CardImage
                       src={currentCard.image_url}
                       alt={currentCard.name}
-                      className="w-[95%] max-w-[380px] rounded-lg shadow-2xl"
+                      variant="detail"
+                      priority
+                      className="w-[95%] max-w-[380px] h-auto rounded-lg shadow-2xl"
                     />
                   )}
                   {cardPrintings.length > 1 && (
