@@ -1,24 +1,61 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
 import { useRouter } from "next/router";
+import {
+  ArrowLeft,
+  Check,
+  FileDown,
+  FileUp,
+  Image as ImageIcon,
+  Loader2,
+  MapPin,
+  Minus,
+  Plus,
+  Search,
+  X,
+} from "lucide-react";
+
+import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
 import { CardImage } from "@/components/CardImage";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DeckArtPicker } from "@/components/DeckArtPicker";
+import { DeckExportDialog, DeckImportDialog, type ImportMode } from "@/components/DeckListTransfer";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { deckService, type DeckWithCards } from "@/services/deckService";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import {
+  DECK_SECTIONS,
+  SECTION_LABELS,
+  formatDeckList,
+  type DeckListEntry,
+  type DeckSection,
+} from "@/lib/deckList";
 import {
   RARITY_LABELS,
   cardService,
   type CardWithSet,
   type FilterOption,
-  type Set,
+  type Set as SetRow,
 } from "@/services/cardService";
-import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Plus, Minus, Search, Check, X, MapPin } from "lucide-react";
-import Link from "next/link";
+import { collectionService, type CardOwnership } from "@/services/collectionService";
+import { deckService, type DeckCardWithCard, type DeckWithCards } from "@/services/deckService";
 
 /** "LESSER BOON" -> "Lesser Boon", for the type dropdown labels. */
 const toTitleCase = (text: string): string =>
@@ -27,13 +64,23 @@ const toTitleCase = (text: string): string =>
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
 
+const EMPTY_OWNERSHIP: CardOwnership = {
+  personal: 0,
+  sale: 0,
+  loaned: 0,
+  total: 0,
+  locations: [],
+};
+
 export default function DeckDetailPage() {
   const router = useRouter();
   const { id } = router.query;
   const { user, loading: authLoading } = useAuth();
+  const { toast } = useToast();
+
   const [deck, setDeck] = useState<DeckWithCards | null>(null);
   const [allCards, setAllCards] = useState<CardWithSet[]>([]);
-  const [sets, setSets] = useState<Set[]>([]);
+  const [sets, setSets] = useState<SetRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [addCardDialogOpen, setAddCardDialogOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -45,7 +92,9 @@ export default function DeckDetailPage() {
   const [cardPageCount, setCardPageCount] = useState(1);
   const [cardTotal, setCardTotal] = useState(0);
   const [typeOptions, setTypeOptions] = useState<FilterOption[]>([]);
-  const [userCollection, setUserCollection] = useState<Map<string, { quantity: number; location?: string }>>(new Map());
+  const [ownership, setOwnership] = useState<Map<string, CardOwnership>>(new Map());
+  /** Which list the add dialog puts cards into. */
+  const [addSection, setAddSection] = useState<DeckSection>("main");
   const cardsPerPage = 60;
 
   useEffect(() => {
@@ -57,57 +106,50 @@ export default function DeckDetailPage() {
   useEffect(() => {
     if (user && id) {
       loadDeck();
-      loadUserCollection();
+      loadReferenceData();
     }
   }, [user, id]);
 
   const loadDeck = async () => {
     if (!id || typeof id !== "string") return;
     try {
-      const data = await deckService.getDeckById(id);
-      setDeck(data);
+      setDeck(await deckService.getDeckById(id));
     } catch (error) {
-      console.error("Error loading deck:", error);
+      toast({
+        title: "Could not load that deck",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const loadUserCollection = async () => {
+  const loadReferenceData = async () => {
     if (!user) return;
     try {
-      const [setsData, collectionData, filterOptions] = await Promise.all([
+      const [setsData, ownershipMap, filterOptions] = await Promise.all([
         cardService.getAllSets(),
-        cardService.getUserCollection(user.id),
+        // Summed across buckets and locations. This used to read the first
+        // holding row only, so a card split between two boxes counted as
+        // whatever happened to come back first.
+        collectionService.getOwnershipMap(user.id),
         cardService.getFilterOptions(),
       ]);
+
       // Base expansions first, matching the precedence the card grid uses.
-      setSets(
-        setsData.slice().sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name))
-      );
+      setSets(setsData.slice().sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)));
       setTypeOptions(filterOptions.types);
-      
-      const collectionMap = new Map();
-      collectionData.forEach(card => {
-        const collection = Array.isArray(card.user_collections) ? card.user_collections[0] : card.user_collections;
-        if (collection) {
-          collectionMap.set(card.id, {
-            quantity: collection.quantity,
-            location: collection.location,
-          });
-        }
-      });
-      setUserCollection(collectionMap);
+      setOwnership(ownershipMap);
     } catch (error) {
-      console.error("Error loading user collection:", error);
+      console.error("Error loading reference data:", error);
     }
   };
 
   const loadAllCards = async () => {
     try {
-      // One page from Postgres. This used to call getCards(), which loops until
-      // it has every matching printing — the entire catalog when no filter is
-      // set — and re-ran on every keystroke.
+      // One page from Postgres, rather than looping the whole catalog on every
+      // keystroke.
       const { rows, total } = await cardService.getCardsPage({
         page: cardPage,
         pageSize: cardsPerPage,
@@ -134,114 +176,201 @@ export default function DeckDetailPage() {
   }, [debouncedSearch, selectedSet, selectedRarity, selectedType]);
 
   useEffect(() => {
-    if (addCardDialogOpen) {
-      loadAllCards();
-    }
+    if (addCardDialogOpen) loadAllCards();
   }, [addCardDialogOpen, cardPage, debouncedSearch, selectedSet, selectedRarity, selectedType]);
 
-  const handleAddCard = async (cardId: string, quantity: number = 1) => {
-    if (!deck) return;
+  const withDeck = async (work: () => Promise<unknown>, failure: string) => {
     try {
-      await deckService.addCardToDeck(deck.id, cardId, quantity);
+      await work();
       await loadDeck();
     } catch (error) {
-      console.error("Error adding card:", error);
+      toast({
+        title: failure,
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleUpdateQuantity = async (cardId: string, quantity: number) => {
-    if (!deck) return;
-    try {
-      await deckService.updateDeckCard(deck.id, cardId, quantity);
-      await loadDeck();
-    } catch (error) {
-      console.error("Error updating card:", error);
-    }
-  };
+  const handleAddCard = (cardId: string, section: DeckSection) =>
+    withDeck(
+      () => deckService.addCardToDeck(deck!.id, cardId, 1, section),
+      "Could not add that card"
+    );
 
-  const getDeckStats = () => {
-    if (!deck) return { total: 0, owned: 0, needed: 0 };
-    let total = 0;
-    let owned = 0;
-    
-    deck.deck_cards.forEach(deckCard => {
-      const needed = deckCard.quantity;
-      const inCollection = userCollection.get(deckCard.card_id)?.quantity || 0;
-      total += needed;
-      owned += Math.min(needed, inCollection);
+  const handleUpdateQuantity = (cardId: string, quantity: number, section: DeckSection) =>
+    withDeck(
+      () => deckService.updateDeckCard(deck!.id, cardId, quantity, section),
+      "Could not change that quantity"
+    );
+
+  const handleMoveSection = (
+    cardId: string,
+    from: DeckSection,
+    to: DeckSection,
+    quantity: number
+  ) =>
+    withDeck(
+      () => deckService.moveCardSection(deck!.id, cardId, from, to, quantity),
+      "Could not move that card"
+    );
+
+  const handleImport = async (entries: DeckListEntry[], mode: ImportMode) => {
+    const result = await deckService.importDeckList(deck!.id, user!.id, entries, {
+      replace: mode === "replace",
     });
-    
-    return { total, owned, needed: total - owned };
+    await loadDeck();
+    return result;
   };
 
-  const getRarityColor = (rarity: string) => {
-    switch (rarity.toLowerCase()) {
-      case "common": return "bg-slate-500";
-      case "uncommon": return "bg-green-500";
-      case "rare": return "bg-blue-500";
-      case "super rare": return "bg-purple-500";
-      case "ultra rare": return "bg-amber-500";
-      default: return "bg-gray-500";
+  /** Rows grouped into the three lists, each sorted by name. */
+  const sections = useMemo(() => {
+    const cards = deck?.deck_cards ?? [];
+    return DECK_SECTIONS.map((section) => ({
+      section,
+      rows: cards
+        .filter((row) => row.section === section)
+        .sort((a, b) => a.cards.name.localeCompare(b.cards.name)),
+      copies: cards
+        .filter((row) => row.section === section)
+        .reduce((total, row) => total + row.quantity, 0),
+    }));
+  }, [deck]);
+
+  const exportText = useMemo(
+    () =>
+      formatDeckList(
+        (deck?.deck_cards ?? []).map((row) => ({
+          quantity: row.quantity,
+          name: row.cards.name,
+          section: row.section,
+        }))
+      ),
+    [deck]
+  );
+
+  /**
+   * Copies the deck asks for against copies on hand.
+   *
+   * Cards lent out are counted as owned but not as available — they are
+   * someone else's problem until they come back, and a deck you cannot
+   * physically build is the thing this number exists to show.
+   */
+  const stats = useMemo(() => {
+    let needed = 0;
+    let available = 0;
+    let lentOut = 0;
+
+    for (const row of deck?.deck_cards ?? []) {
+      const held = ownership.get(row.card_id) ?? EMPTY_OWNERSHIP;
+      const onHand = held.personal + held.sale;
+      needed += row.quantity;
+      available += Math.min(row.quantity, onHand);
+      if (held.loaned > 0 && onHand < row.quantity) {
+        lentOut += Math.min(row.quantity - onHand, held.loaned);
+      }
     }
-  };
+
+    return { needed, available, missing: needed - available, lentOut };
+  }, [deck, ownership]);
 
   if (authLoading || loading || !user || !deck) {
     return (
       <>
         <Navigation />
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+          <Loader2 className="h-8 w-8 animate-spin text-cyan-500" />
         </div>
       </>
     );
   }
 
-  const stats = getDeckStats();
-
   return (
     <>
-      <Navigation />
-      <main className="min-h-screen bg-gradient-to-b from-background to-secondary/10">
-        <div className="container py-8">
-          <div className="mb-6">
-            <Button variant="ghost" asChild className="mb-4">
-              <Link href="/decks">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to Decks
-              </Link>
-            </Button>
-            <div className="flex items-start justify-between">
-              <div>
-                <h1 className="text-4xl font-heading font-bold mb-2">{deck.name}</h1>
-                {deck.description && (
-                  <p className="text-muted-foreground">{deck.description}</p>
-                )}
-              </div>
+      <SEO title={deck.name} description={deck.description ?? "A Grand Archive deck"} />
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <Navigation />
+
+        <main className="container mx-auto px-4 py-8">
+          <Button
+            variant="ghost"
+            asChild
+            className="mb-4 text-slate-300 hover:bg-slate-800 hover:text-white"
+          >
+            <Link href="/decks">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Decks
+            </Link>
+          </Button>
+
+          <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="mb-2 text-4xl font-bold text-white">{deck.name}</h1>
+              {deck.description && <p className="text-slate-400">{deck.description}</p>}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <DeckImportDialog onImport={handleImport} canReplace={deck.deck_cards.length > 0}>
+                <Button
+                  variant="outline"
+                  className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+                >
+                  <FileUp className="mr-2 h-4 w-4" />
+                  Import
+                </Button>
+              </DeckImportDialog>
+
+              <DeckExportDialog text={exportText} deckName={deck.name}>
+                <Button
+                  variant="outline"
+                  disabled={deck.deck_cards.length === 0}
+                  className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+                >
+                  <FileDown className="mr-2 h-4 w-4" />
+                  Export
+                </Button>
+              </DeckExportDialog>
+
+              <DeckArtPicker
+                deckId={deck.id}
+                currentCardId={deck.cover_card_id}
+                onChange={loadDeck}
+              >
+                <Button
+                  variant="outline"
+                  className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+                >
+                  <ImageIcon className="mr-2 h-4 w-4" />
+                  Deck art
+                </Button>
+              </DeckArtPicker>
+
               <Dialog open={addCardDialogOpen} onOpenChange={setAddCardDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button>
+                  <Button className="bg-cyan-600 text-white hover:bg-cyan-700">
                     <Plus className="mr-2 h-4 w-4" />
                     Add Cards
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+                <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto border-slate-700 bg-slate-900 text-white">
                   <DialogHeader>
-                    <DialogTitle className="font-heading">Add Cards to Deck</DialogTitle>
+                    <DialogTitle className="text-white">Add cards to deck</DialogTitle>
                   </DialogHeader>
-                  
+
                   <div className="space-y-4">
-                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
                       <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                         <Input
                           placeholder="Search..."
                           value={search}
-                          onChange={(e) => setSearch(e.target.value)}
-                          className="pl-9"
+                          onChange={(event) => setSearch(event.target.value)}
+                          className="border-slate-700 bg-slate-800 pl-9 text-white placeholder:text-slate-500"
                         />
                       </div>
+
                       <Select value={selectedSet} onValueChange={setSelectedSet}>
-                        <SelectTrigger>
+                        <SelectTrigger className="border-slate-700 bg-slate-800 text-white">
                           <SelectValue placeholder="All Sets" />
                         </SelectTrigger>
                         <SelectContent>
@@ -253,15 +382,14 @@ export default function DeckDetailPage() {
                           ))}
                         </SelectContent>
                       </Select>
+
                       <Select value={selectedRarity} onValueChange={setSelectedRarity}>
-                        <SelectTrigger>
+                        <SelectTrigger className="border-slate-700 bg-slate-800 text-white">
                           <SelectValue placeholder="All Rarities" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Rarities</SelectItem>
-                          {/* Values are the codes stored in cards.rarity. The
-                              display names that used to be here could never
-                              match, so every rarity filter returned nothing. */}
+                          {/* Values are the codes stored in cards.rarity. */}
                           {Object.entries(RARITY_LABELS).map(([code, label]) => (
                             <SelectItem key={code} value={code}>
                               {label} ({code})
@@ -269,15 +397,14 @@ export default function DeckDetailPage() {
                           ))}
                         </SelectContent>
                       </Select>
+
                       <Select value={selectedType} onValueChange={setSelectedType}>
-                        <SelectTrigger>
+                        <SelectTrigger className="border-slate-700 bg-slate-800 text-white">
                           <SelectValue placeholder="All Types" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Types</SelectItem>
-                          {/* Driven by public.card_filter_options, so all 15
-                              types appear rather than a hardcoded 5, and the
-                              values match cards.types exactly. */}
+                          {/* Driven by public.card_filter_options. */}
                           {typeOptions.map((option) => (
                             <SelectItem key={option.value} value={option.value}>
                               {toTitleCase(option.value)} ({option.count})
@@ -285,9 +412,25 @@ export default function DeckDetailPage() {
                           ))}
                         </SelectContent>
                       </Select>
+
+                      <Select
+                        value={addSection}
+                        onValueChange={(value) => setAddSection(value as DeckSection)}
+                      >
+                        <SelectTrigger className="border-cyan-700 bg-slate-800 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DECK_SECTIONS.map((section) => (
+                            <SelectItem key={section} value={section}>
+                              Add to {SECTION_LABELS[section]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
-                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                    <div className="flex items-center justify-between text-sm text-slate-400">
                       <span>
                         {cardTotal === 0
                           ? "No printings match these filters"
@@ -299,7 +442,8 @@ export default function DeckDetailPage() {
                             variant="outline"
                             size="sm"
                             disabled={cardPage <= 1}
-                            onClick={() => setCardPage((p) => Math.max(1, p - 1))}
+                            onClick={() => setCardPage((page) => Math.max(1, page - 1))}
+                            className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
                           >
                             Previous
                           </Button>
@@ -310,7 +454,10 @@ export default function DeckDetailPage() {
                             variant="outline"
                             size="sm"
                             disabled={cardPage >= cardPageCount}
-                            onClick={() => setCardPage((p) => Math.min(cardPageCount, p + 1))}
+                            onClick={() =>
+                              setCardPage((page) => Math.min(cardPageCount, page + 1))
+                            }
+                            className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
                           >
                             Next
                           </Button>
@@ -318,38 +465,41 @@ export default function DeckDetailPage() {
                       )}
                     </div>
 
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                    <div className="grid max-h-96 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
                       {allCards.map((card) => {
-                        const inCollection = userCollection.get(card.id);
+                        const held = ownership.get(card.id);
                         return (
-                          <Card 
+                          <button
                             key={card.id}
-                            className="cursor-pointer hover:shadow-md transition-shadow"
+                            type="button"
                             onClick={() => {
-                              handleAddCard(card.id);
+                              handleAddCard(card.id, addSection);
                               setAddCardDialogOpen(false);
                             }}
+                            className="overflow-hidden rounded-lg border border-slate-700 bg-slate-800/50 text-left transition-colors hover:border-cyan-500/60"
                           >
-                            <div className="aspect-[2.5/3.5] bg-secondary/20 relative overflow-hidden">
+                            <div className="relative aspect-[2.5/3.5] overflow-hidden bg-slate-900">
                               <CardImage
                                 src={card.image_url}
                                 alt={card.name}
                                 variant="tile"
                                 className="absolute inset-0 h-full w-full object-cover"
                               />
-                              {inCollection && (
-                                <div className="absolute top-2 right-2 bg-green-500 text-white rounded-full p-1">
+                              {held && held.total > 0 && (
+                                <span className="absolute right-2 top-2 rounded-full bg-green-500 p-1 text-white">
                                   <Check className="h-3 w-3" />
-                                </div>
+                                </span>
                               )}
                             </div>
-                            <CardContent className="p-3">
-                              <p className="font-semibold text-sm line-clamp-1">{card.name}</p>
-                              {inCollection && (
-                                <p className="text-xs text-green-600">Owned: {inCollection.quantity}</p>
+                            <div className="p-3">
+                              <p className="line-clamp-1 text-sm font-semibold text-white">
+                                {card.name}
+                              </p>
+                              {held && held.total > 0 && (
+                                <p className="text-xs text-green-400">Own {held.total}</p>
                               )}
-                            </CardContent>
-                          </Card>
+                            </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -359,123 +509,186 @@ export default function DeckDetailPage() {
             </div>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-6 mb-8">
-            <Card className="border-border/50">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium">Total Cards</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-heading font-bold">{stats.total}</div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-green-500/20 bg-gradient-to-br from-green-500/5 to-green-500/10">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium">Cards Owned</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-heading font-bold text-green-600">{stats.owned}</div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-amber-500/10">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium">Cards Needed</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-heading font-bold text-amber-600">{stats.needed}</div>
-              </CardContent>
-            </Card>
+          <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {sections.map(({ section, copies }) => (
+              <StatCard key={section} label={SECTION_LABELS[section]} value={copies} />
+            ))}
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-heading">Deck List</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {deck.deck_cards.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No cards in deck yet. Click "Add Cards" to start building.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {deck.deck_cards.map((deckCard) => {
-                    const card = deckCard.cards;
-                    const inCollection = userCollection.get(card.id);
-                    const needed = deckCard.quantity;
-                    const owned = inCollection?.quantity || 0;
-                    const missing = Math.max(0, needed - owned);
-                    
-                    return (
-                      <div key={deckCard.id} className="flex items-center gap-4 p-4 rounded-lg border border-border/50 hover:bg-secondary/20 transition-colors">
-                        <CardImage
-                          src={card.image_url}
-                          alt={card.name}
-                          variant="row"
-                          className="h-20 w-16 rounded object-cover"
+          <div className="mb-8 grid gap-4 sm:grid-cols-3">
+            <StatCard label="Copies needed" value={stats.needed} />
+            <StatCard label="On hand" value={stats.available} tone="green" />
+            <StatCard
+              label="Still missing"
+              value={stats.missing}
+              tone={stats.missing > 0 ? "amber" : "green"}
+              note={stats.lentOut > 0 ? `${stats.lentOut} of them are lent out` : undefined}
+            />
+          </div>
+
+          <div className="space-y-6">
+            {sections.map(({ section, rows, copies }) => (
+              <Card key={section} className="border-slate-700 bg-slate-800/50">
+                <CardContent className="p-4">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="text-xl font-bold text-white">
+                      {SECTION_LABELS[section]}
+                    </h2>
+                    <span className="text-sm text-slate-400">
+                      {copies} card{copies === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {rows.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-slate-500">
+                      Nothing here yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {rows.map((row) => (
+                        <DeckRow
+                          key={row.id}
+                          row={row}
+                          held={ownership.get(row.card_id) ?? EMPTY_OWNERSHIP}
+                          onQuantity={(quantity) =>
+                            handleUpdateQuantity(row.card_id, quantity, row.section)
+                          }
+                          onMove={(to) =>
+                            handleMoveSection(row.card_id, row.section, to, row.quantity)
+                          }
                         />
-                        <div className="flex-1">
-                          <h3 className="font-heading font-semibold">{card.name}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Badge className={`${getRarityColor(card.rarity)} text-white text-xs`}>
-                              {card.rarity}
-                            </Badge>
-                            {card.element && (
-                              <Badge variant="outline" className="text-xs">{card.element}</Badge>
-                            )}
-                            <Badge variant="secondary" className="text-xs">{card.card_type}</Badge>
-                          </div>
-                          {inCollection?.location && (
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                              <MapPin className="h-3 w-3" />
-                              {inCollection.location}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <div className="text-sm text-muted-foreground">Need: {needed}</div>
-                            <div className={`text-sm font-medium ${owned >= needed ? 'text-green-600' : 'text-amber-600'}`}>
-                              {owned >= needed ? (
-                                <span className="flex items-center gap-1">
-                                  <Check className="h-4 w-4" />
-                                  Have all
-                                </span>
-                              ) : (
-                                <span className="flex items-center gap-1">
-                                  <X className="h-4 w-4" />
-                                  Need {missing}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => handleUpdateQuantity(card.id, Math.max(0, needed - 1))}
-                            >
-                              <Minus className="h-4 w-4" />
-                            </Button>
-                            <span className="w-8 text-center font-semibold">{needed}</span>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => handleUpdateQuantity(card.id, needed + 1)}
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </main>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </main>
+      </div>
     </>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  tone = "plain",
+  note,
+}: {
+  label: string;
+  value: number;
+  tone?: "plain" | "green" | "amber";
+  note?: string;
+}) {
+  const valueColor =
+    tone === "green" ? "text-green-400" : tone === "amber" ? "text-amber-400" : "text-white";
+
+  return (
+    <Card className="border-slate-700 bg-slate-800/50">
+      <CardContent className="p-4">
+        <p className="text-sm text-slate-400">{label}</p>
+        <p className={`text-3xl font-bold ${valueColor}`}>{value}</p>
+        {note && <p className="mt-1 text-xs text-slate-500">{note}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeckRow({
+  row,
+  held,
+  onQuantity,
+  onMove,
+}: {
+  row: DeckCardWithCard;
+  held: CardOwnership;
+  onQuantity: (quantity: number) => void;
+  onMove: (to: DeckSection) => void;
+}) {
+  const card = row.cards;
+  const onHand = held.personal + held.sale;
+  const missing = Math.max(0, row.quantity - onHand);
+
+  return (
+    <div className="flex flex-wrap items-center gap-4 rounded-lg border border-slate-700 bg-slate-900/40 p-3 transition-colors hover:border-slate-600">
+      <CardImage
+        src={card.image_url}
+        alt={card.name}
+        variant="row"
+        className="h-20 w-auto rounded"
+      />
+
+      <div className="min-w-0 flex-1">
+        <h3 className="font-semibold text-white">{card.name}</h3>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+          <Badge variant="outline" className="border-cyan-500 font-mono text-cyan-400">
+            {card.sets?.code ?? "???"}
+          </Badge>
+          <span className="text-slate-400">{card.rarity}</span>
+          {card.element && <span className="text-slate-400">{card.element}</span>}
+          {card.sets?.name && <span className="text-slate-500">{card.sets.name}</span>}
+        </div>
+        {held.locations.length > 0 && (
+          <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+            <MapPin className="h-3 w-3" />
+            {held.locations.join(", ")}
+          </div>
+        )}
+      </div>
+
+      <div className="text-right text-sm">
+        {missing === 0 ? (
+          <span className="flex items-center gap-1 text-green-400">
+            <Check className="h-4 w-4" />
+            Have all {row.quantity}
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-amber-400">
+            <X className="h-4 w-4" />
+            Need {missing} more
+          </span>
+        )}
+        <p className="text-slate-500">
+          {onHand} on hand
+          {held.loaned > 0 && `, ${held.loaned} lent out`}
+        </p>
+      </div>
+
+      <Select value={row.section} onValueChange={(value) => onMove(value as DeckSection)}>
+        <SelectTrigger className="w-[150px] border-slate-700 bg-slate-800 text-xs text-slate-200">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {DECK_SECTIONS.map((section) => (
+            <SelectItem key={section} value={section}>
+              {SECTION_LABELS[section]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          title={row.quantity === 1 ? "Remove from deck" : "One fewer"}
+          onClick={() => onQuantity(row.quantity - 1)}
+          className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+        >
+          <Minus className="h-4 w-4" />
+        </Button>
+        <span className="w-8 text-center font-semibold text-white">{row.quantity}</span>
+        <Button
+          variant="outline"
+          size="icon"
+          title="One more"
+          onClick={() => onQuantity(row.quantity + 1)}
+          className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
