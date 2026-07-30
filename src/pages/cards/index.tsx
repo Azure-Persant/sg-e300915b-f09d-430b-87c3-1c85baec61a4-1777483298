@@ -69,6 +69,10 @@ export default function CardsPage() {
   const [sets, setSets] = useState<SetRow[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  // The page box is edited as text and only acted on when committed. Bound
+  // straight to currentPage it navigated on every keystroke, so typing "12"
+  // jumped to page 1 on the first digit and scrolled away mid-entry.
+  const [pageInput, setPageInput] = useState("1");
   const [dbStatus, setDbStatus] = useState<any>(null);
   const [selectedCardPrintings, setSelectedCardPrintings] = useState<CardWithSet[]>([]);
   const [selectedPrintingId, setSelectedPrintingId] = useState<string>("");
@@ -155,6 +159,34 @@ export default function CardsPage() {
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Keeps the box honest when the page changes by other means — the arrows, or a
+  // filter change resetting to page 1.
+  useEffect(() => {
+    setPageInput(String(currentPage));
+  }, [currentPage]);
+
+  /** Applied on Enter or on leaving the field, never mid-typing. */
+  const commitPageInput = () => {
+    const typed = pageInput.trim();
+
+    // Empty or unparseable means "never mind", so put the real page back rather
+    // than treating it as page 0 and jumping to the first page.
+    if (typed === "") {
+      setPageInput(String(currentPage));
+      return;
+    }
+
+    const parsed = Number.parseInt(typed, 10);
+    if (!Number.isFinite(parsed)) {
+      setPageInput(String(currentPage));
+      return;
+    }
+
+    const clamped = Math.min(Math.max(parsed, 1), totalPages);
+    setPageInput(String(clamped));
+    if (clamped !== currentPage) handlePageChange(clamped);
   };
 
   const handleCardClick = async (card: CatalogCard) => {
@@ -331,17 +363,22 @@ export default function CardsPage() {
                   
                   <div className="flex items-center gap-3">
                     <span className="text-white">Page</span>
+                    {/* text + inputMode rather than type=number: a number input
+                        fights a controlled value while typing, and this still
+                        offers a numeric keypad on mobile. */}
                     <Input
-                      type="number"
-                      min={1}
-                      max={totalPages}
-                      value={currentPage}
-                      onChange={(e) => {
-                        const page = parseInt(e.target.value);
-                        if (page >= 1 && page <= totalPages) {
-                          handlePageChange(page);
+                      type="text"
+                      inputMode="numeric"
+                      aria-label={`Page number, 1 to ${totalPages}`}
+                      value={pageInput}
+                      onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ""))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitPageInput();
                         }
                       }}
+                      onBlur={commitPageInput}
                       className="w-20 text-center bg-slate-800 border-slate-700 text-white"
                     />
                     <span className="text-white">of {totalPages}</span>
