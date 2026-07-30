@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import { Navigation } from "@/components/Navigation";
+import { CardImage } from "@/components/CardImage";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { deckService, type DeckWithCards } from "@/services/deckService";
 import {
   RARITY_LABELS,
@@ -17,7 +17,7 @@ import {
   type Set,
 } from "@/services/cardService";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Plus, Minus, Search, Filter, Check, X, MapPin } from "lucide-react";
+import { ArrowLeft, Plus, Minus, Search, Check, X, MapPin } from "lucide-react";
 import Link from "next/link";
 
 /** "LESSER BOON" -> "Lesser Boon", for the type dropdown labels. */
@@ -331,10 +331,11 @@ export default function DeckDetailPage() {
                             }}
                           >
                             <div className="aspect-[2.5/3.5] bg-secondary/20 relative overflow-hidden">
-                              <img
+                              <CardImage
                                 src={card.image_url}
                                 alt={card.name}
-                                className="w-full h-full object-cover"
+                                variant="tile"
+                                className="absolute inset-0 h-full w-full object-cover"
                               />
                               {inCollection && (
                                 <div className="absolute top-2 right-2 bg-green-500 text-white rounded-full p-1">
@@ -407,10 +408,11 @@ export default function DeckDetailPage() {
                     
                     return (
                       <div key={deckCard.id} className="flex items-center gap-4 p-4 rounded-lg border border-border/50 hover:bg-secondary/20 transition-colors">
-                        <img
+                        <CardImage
                           src={card.image_url}
                           alt={card.name}
-                          className="w-16 h-20 object-cover rounded"
+                          variant="row"
+                          className="h-20 w-16 rounded object-cover"
                         />
                         <div className="flex-1">
                           <h3 className="font-heading font-semibold">{card.name}</h3>
