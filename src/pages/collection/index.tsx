@@ -419,92 +419,66 @@ export default function CollectionPage() {
               </Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
               {filteredCollection.map((group) => (
                 <Card
                   key={group.cardName}
                   className="bg-slate-800 border-slate-700 overflow-hidden"
                 >
-                  <CardContent className="p-4">
-                    <div className="flex gap-4">
-                      <div 
-                        className="flex-shrink-0 w-24 cursor-pointer"
-                        onClick={() => handleCardClick(group.representativeCard)}
+                  {/* Art first: the illustration is how a card is recognised,
+                      so the name, set code, per-printing counts and locations
+                      that used to sit beside it are now reached through Edit,
+                      which is where they are acted on anyway. The grouped data
+                      behind them is untouched — handleEditCard still reads
+                      group.printings. */}
+                  <CardContent className="p-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCardClick(group.representativeCard)}
+                      title={group.cardName}
+                      aria-label={`View ${group.cardName}`}
+                      className="group relative block aspect-[2.5/3.5] w-full overflow-hidden rounded bg-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    >
+                      {group.representativeCard.image_url ? (
+                        <CardImage
+                          src={group.representativeCard.image_url}
+                          alt={group.cardName}
+                          variant="tile"
+                          className="absolute inset-0 h-full w-full object-cover transition-transform group-hover:scale-105"
+                        />
+                      ) : (
+                        /* Keeps every tile the same height when a printing has
+                           no art, and is the one place the name still shows —
+                           there would otherwise be nothing to identify it by. */
+                        <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-xs text-slate-500">
+                          {group.cardName}
+                        </span>
+                      )}
+
+                      {group.representativeCard.is_restricted && (
+                        <span className="absolute right-1 top-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                          Restricted
+                        </span>
+                      )}
+                    </button>
+
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {/* Reports a count rather than doing anything, so it is
+                          not a button — but it is sized to the sm button
+                          variant (h-8, text-xs) so it reads as Edit's sibling. */}
+                      <span className="inline-flex h-8 flex-1 items-center justify-center rounded-md border border-cyan-500 px-2 text-xs font-medium text-cyan-400">
+                        Total: {group.totalQuantity}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleEditCard(group)}
+                        aria-label={`Edit ${group.cardName}`}
+                        className="flex-1 border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
                       >
-                        {group.representativeCard.image_url && (
-                          <CardImage
-                            src={group.representativeCard.image_url}
-                            alt={group.cardName}
-                            variant="tile"
-                            className="w-full h-auto rounded hover:scale-105 transition-transform"
-                          />
-                        )}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <h3 
-                            className="text-white font-semibold cursor-pointer hover:text-cyan-400 transition-colors"
-                            onClick={() => handleCardClick(group.representativeCard)}
-                          >
-                            {group.cardName}
-                          </h3>
-                          {group.representativeCard.is_restricted && (
-                            <Badge className="bg-red-600 text-white text-xs flex-shrink-0">
-                              Restricted
-                            </Badge>
-                          )}
-                        </div>
-                        
-                        <div className="space-y-2 text-sm">
-                          <div className="text-slate-400">
-                            Total: <span className="text-white font-medium">{group.totalQuantity}</span>
-                          </div>
-                          
-                          {/* One line per place, since a printing can sit in
-                              several. Colour carries the bucket. */}
-                          <div className="space-y-1">
-                            {group.printings.map((printing, idx) => (
-                              <div key={idx} className="flex items-center gap-2 text-xs">
-                                <Badge variant="outline" className="border-cyan-500 text-cyan-400 font-mono">
-                                  {printing.setCode}
-                                </Badge>
-                                <span
-                                  className={
-                                    printing.item.bucket === "sale"
-                                      ? "text-amber-400"
-                                      : printing.item.bucket === "loaned"
-                                        ? "text-violet-400"
-                                        : "text-white"
-                                  }
-                                >
-                                  {printing.item.quantity}x
-                                  {printing.item.bucket === "sale" && " for sale"}
-                                  {printing.item.bucket === "loaned" && " lent"}
-                                </span>
-                                {printing.item.location && (
-                                  <span className="text-slate-400">
-                                    {printing.item.bucket === "loaned" ? "to " : ""}
-                                    {printing.item.location}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        
-                        <div className="flex gap-2 mt-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleEditCard(group)}
-                            className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
-                          >
-                            <Pencil className="h-3 w-3 mr-1" />
-                            Edit
-                          </Button>
-                        </div>
-                      </div>
+                        <Pencil className="mr-1 h-3 w-3" />
+                        Edit
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
