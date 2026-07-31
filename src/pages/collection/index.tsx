@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, Plus, Pencil, Share2, Trash2, Package, ChevronLeft, ChevronRight, Image as ImageIcon } from "lucide-react";
+import { Search, Loader2, Plus, Pencil, Share2, Trash2, Package, ChevronLeft, ChevronRight, Image as ImageIcon, FolderInput, Sparkles, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   BUCKETS,
@@ -77,12 +78,18 @@ export default function CollectionPage() {
     forSaleCards: 0,
     loanedQuantity: 0,
     loanedCards: 0,
+    foilQuantity: 0,
+    foilCards: 0,
     locations: [],
   });
   
   // Grouped collection by card name with printing details
   interface GroupedCard {
+    /** Grid key: one tile per card name per finish. */
+    key: string;
     cardName: string;
+    /** True for the foil tile of a card owned in both finishes. */
+    foil: boolean;
     printings: Array<{
       item: Holding;
       setCode: string;
@@ -94,12 +101,23 @@ export default function CollectionPage() {
   const [groupedCollection, setGroupedCollection] = useState<GroupedCard[]>([]);
   /** Chosen preview printing per card name — see collection_previews. */
   const [previews, setPreviews] = useState<Map<string, string>>(new Map());
+  /** Tiles ticked for a bulk move, by grid key. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLocation, setBulkLocation] = useState("");
+  const [moving, setMoving] = useState(false);
   
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedGroupedCard, setSelectedGroupedCard] = useState<GroupedCard | null>(null);
   // One entry per place, not per printing: a printing can sit in several places.
   const [editPlaces, setEditPlaces] = useState<
-    Array<{ cardId: string; setCode: string; bucket: CollectionBucket; location: string; quantity: number }>
+    Array<{
+      cardId: string;
+      setCode: string;
+      bucket: CollectionBucket;
+      location: string;
+      quantity: number;
+      foil: boolean;
+    }>
   >([]);
   const [editCardIds, setEditCardIds] = useState<Array<{ cardId: string; setCode: string }>>([]);
   
@@ -160,17 +178,22 @@ export default function CollectionPage() {
 
         const setName = set?.name || "Unknown";
         const setCode = set?.code || "???";
-        
-        if (!grouped.has(cardName)) {
-          grouped.set(cardName, {
+        // Foil copies are their own tile: the point of recording the finish is
+        // being able to see it, and a shimmering duplicate is how it shows.
+        const key = `${cardName}|${item.foil ? "foil" : "plain"}`;
+
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            key,
             cardName,
+            foil: item.foil,
             printings: [],
             totalQuantity: 0,
             representativeCard: item.card,
           });
         }
-        
-        const group = grouped.get(cardName)!;
+
+        const group = grouped.get(key)!;
         group.printings.push({
           item,
           setCode,
@@ -190,8 +213,10 @@ export default function CollectionPage() {
         if (chosen?.item.card) group.representativeCard = chosen.item.card;
       }
 
+      // Name first, then plain before foil, so the two tiles of one card sit
+      // next to each other.
       setGroupedCollection(Array.from(grouped.values()).sort((a, b) =>
-        a.cardName.localeCompare(b.cardName)
+        a.cardName.localeCompare(b.cardName) || Number(a.foil) - Number(b.foil)
       ));
     } catch (error) {
       toast({
@@ -242,6 +267,61 @@ export default function CollectionPage() {
     }
   };
 
+  const toggleSelected = (key: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  /**
+   * Move every place behind the ticked tiles to one location.
+   *
+   * Loans are left alone by the service — their location names the person
+   * holding the cards, so sweeping them into "Box 3" would be a lie — and it
+   * says how many it skipped so the count adding up is explicable.
+   */
+  const handleBulkMove = async () => {
+    const place = bulkLocation.trim();
+    if (!place || selected.size === 0) return;
+
+    const ids = filteredCollection
+      .filter((group) => selected.has(group.key))
+      .flatMap((group) => group.printings.map((printing) => printing.item.id));
+
+    setMoving(true);
+    try {
+      const result = await collectionService.moveHoldings(ids, place);
+      const skipped = result.skippedLoans
+        ? ` ${result.skippedLoans} lent-out ${result.skippedLoans === 1 ? "place" : "places"} left alone.`
+        : "";
+      const mergedNote = result.merged
+        ? ` ${result.merged} merged with copies already there.`
+        : "";
+
+      toast({
+        title: result.moved ? `Moved to ${place}` : "Nothing to move",
+        description: result.moved
+          ? `${result.moved} ${result.moved === 1 ? "place" : "places"} moved.${mergedNote}${skipped}`
+          : `Everything selected was already there or lent out.${skipped}`,
+      });
+
+      setSelected(new Set());
+      setBulkLocation("");
+      await loadCollection();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Could not move those cards",
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    } finally {
+      setMoving(false);
+    }
+  };
+
   const handleEditCard = (groupedCard: GroupedCard) => {
     setSelectedGroupedCard(groupedCard);
     setEditCardIds(
@@ -254,6 +334,7 @@ export default function CollectionPage() {
         bucket: p.item.bucket,
         location: p.item.location,
         quantity: p.item.quantity,
+        foil: p.item.foil,
       }))
     );
     setEditDialogOpen(true);
@@ -264,7 +345,10 @@ export default function CollectionPage() {
   };
 
   const addPlace = (cardId: string, setCode: string, bucket: CollectionBucket) => {
-    setEditPlaces((prev) => [...prev, { cardId, setCode, bucket, location: "", quantity: 1 }]);
+    setEditPlaces((prev) => [
+      ...prev,
+      { cardId, setCode, bucket, location: "", quantity: 1, foil: false },
+    ]);
   };
 
   const dropPlace = (index: number) => {
@@ -295,7 +379,12 @@ export default function CollectionPage() {
         editCardIds.map(({ cardId }) => {
           const places: PlaceInput[] = editPlaces
             .filter((p) => p.cardId === cardId && p.quantity > 0)
-            .map((p) => ({ bucket: p.bucket, location: p.location, quantity: p.quantity }));
+            .map((p) => ({
+              bucket: p.bucket,
+              location: p.location,
+              quantity: p.quantity,
+              foil: p.foil,
+            }));
           return collectionService.setCardHoldings(user.id, cardId, places);
         })
       );
@@ -477,6 +566,71 @@ export default function CollectionPage() {
             </div>
           </div>
 
+          {/* Only present once something is ticked, so it costs nothing the rest
+              of the time. Sticky, because the tiles being selected are usually
+              further down the page than the button that acts on them. */}
+          {selected.size > 0 && (
+            <div className="sticky top-16 z-40 mb-6 rounded-lg border border-cyan-500/60 bg-slate-900/95 p-3 shadow-lg backdrop-blur">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-white">
+                  {selected.size} card{selected.size === 1 ? "" : "s"} selected
+                </span>
+
+                <div className="flex min-w-[220px] flex-1 items-center gap-2">
+                  <Input
+                    value={bulkLocation}
+                    onChange={(event) => setBulkLocation(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && bulkLocation.trim()) handleBulkMove();
+                    }}
+                    placeholder="Move to... e.g. Box 3"
+                    aria-label="Location to move the selected cards to"
+                    className="border-slate-700 bg-slate-800 text-white placeholder:text-slate-500"
+                  />
+                  <Button
+                    onClick={handleBulkMove}
+                    disabled={!bulkLocation.trim() || moving}
+                    className="bg-cyan-600 text-white hover:bg-cyan-700"
+                  >
+                    {moving ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FolderInput className="mr-2 h-4 w-4" />
+                    )}
+                    Move
+                  </Button>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  onClick={() => setSelected(new Set())}
+                  className="text-slate-300 hover:bg-slate-800 hover:text-white"
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  Clear
+                </Button>
+              </div>
+
+              {/* The places already in use, so a bulk move does not need the
+                  name typed exactly right from memory. */}
+              {stats.locations.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-slate-500">Existing:</span>
+                  {stats.locations.map((place) => (
+                    <button
+                      key={place}
+                      type="button"
+                      onClick={() => setBulkLocation(place)}
+                      className="rounded border border-slate-600 px-2 py-0.5 text-xs text-slate-300 hover:border-cyan-500 hover:text-white"
+                    >
+                      {place}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div className="flex justify-center items-center py-20">
               <Loader2 className="h-8 w-8 animate-spin text-cyan-500" />
@@ -497,69 +651,109 @@ export default function CollectionPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
-              {filteredCollection.map((group) => (
-                <Card
-                  key={group.cardName}
-                  className="bg-slate-800 border-slate-700 overflow-hidden"
-                >
-                  {/* Art first: the illustration is how a card is recognised,
-                      so the name, set code, per-printing counts and locations
-                      that used to sit beside it are now reached through Edit,
-                      which is where they are acted on anyway. The grouped data
-                      behind them is untouched — handleEditCard still reads
-                      group.printings. */}
-                  <CardContent className="p-2">
-                    <button
-                      type="button"
-                      onClick={() => handleCardClick(group.representativeCard)}
-                      title={group.cardName}
-                      aria-label={`View ${group.cardName}`}
-                      className="group relative block aspect-[2.5/3.5] w-full overflow-hidden rounded bg-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                    >
-                      {group.representativeCard.image_url ? (
-                        <CardImage
-                          src={group.representativeCard.image_url}
-                          alt={group.cardName}
-                          variant="tile"
-                          className="absolute inset-0 h-full w-full object-cover transition-transform group-hover:scale-105"
-                        />
-                      ) : (
-                        /* Keeps every tile the same height when a printing has
-                           no art, and is the one place the name still shows —
-                           there would otherwise be nothing to identify it by. */
-                        <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-xs text-slate-500">
-                          {group.cardName}
-                        </span>
-                      )}
-
-                      {group.representativeCard.is_restricted && (
-                        <span className="absolute right-1 top-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                          Restricted
-                        </span>
-                      )}
-                    </button>
-
-                    <div className="mt-2 flex items-center gap-1.5">
-                      {/* Reports a count rather than doing anything, so it is
-                          not a button — but it is sized to the sm button
-                          variant (h-8, text-xs) so it reads as Edit's sibling. */}
-                      <span className="inline-flex h-8 flex-1 items-center justify-center rounded-md border border-cyan-500 px-2 text-xs font-medium text-cyan-400">
-                        Total: {group.totalQuantity}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleEditCard(group)}
-                        aria-label={`Edit ${group.cardName}`}
-                        className="flex-1 border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
+              {filteredCollection.map((group) => {
+                const picked = selected.has(group.key);
+                return (
+                  <Card
+                    key={group.key}
+                    className={`overflow-hidden border-slate-700 bg-slate-800 ${
+                      picked ? "ring-2 ring-cyan-400" : ""
+                    }`}
+                  >
+                    {/* Art first: the name, set code, per-printing counts and
+                        locations that used to sit beside it are reached through
+                        Edit, which is where they are acted on anyway. */}
+                    <CardContent className="p-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCardClick(group.representativeCard)}
+                        title={group.cardName}
+                        aria-label={`View ${group.cardName}${group.foil ? " (foil)" : ""}`}
+                        className="group relative block aspect-[2.5/3.5] w-full overflow-hidden rounded bg-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                       >
-                        <Pencil className="mr-1 h-3 w-3" />
-                        Edit
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                        {group.representativeCard.image_url ? (
+                          <CardImage
+                            src={group.representativeCard.image_url}
+                            alt={group.cardName}
+                            variant="tile"
+                            className="absolute inset-0 h-full w-full object-cover transition-transform group-hover:scale-105"
+                          />
+                        ) : (
+                          /* Keeps every tile the same height when a printing has
+                             no art, and is the one place the name still shows —
+                             there would otherwise be nothing to identify it by. */
+                          <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-xs text-slate-500">
+                            {group.cardName}
+                          </span>
+                        )}
+
+                        {/* The foil treatment: a rainbow wash over the art plus a
+                            highlight that sweeps across, as a foil does when it
+                            catches the light. Purely decorative, so it is hidden
+                            from screen readers and the "Foil" badge below carries
+                            the meaning instead — colour and motion should not be
+                            the only way to tell. The sweep stops for anyone who
+                            asked for reduced motion. */}
+                        {group.foil && (
+                          <span aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+                            <span className="absolute inset-0 bg-[linear-gradient(115deg,rgba(255,0,128,0.45),rgba(255,214,0,0.45),rgba(0,255,170,0.45),rgba(0,140,255,0.45),rgba(180,0,255,0.45))] opacity-40 mix-blend-color-dodge" />
+                            <span className="absolute inset-y-0 left-0 w-1/3 animate-foil-sweep bg-gradient-to-r from-transparent via-white/70 to-transparent motion-reduce:animate-none" />
+                          </span>
+                        )}
+
+                        <div className="absolute left-1 top-1 flex flex-col items-start gap-1">
+                          {group.foil && (
+                            <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-200">
+                              Foil
+                            </span>
+                          )}
+                        </div>
+
+                        {group.representativeCard.is_restricted && (
+                          <span className="absolute right-1 top-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                            Restricted
+                          </span>
+                        )}
+                      </button>
+
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {/* Selecting a tile selects every place its copies sit
+                            in, which is what the bulk move acts on. Its own
+                            control rather than part of the art button, so
+                            clicking the card still opens it. */}
+                        <label
+                          className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-slate-600 hover:bg-slate-700"
+                          title={`Select ${group.cardName} for a bulk move`}
+                        >
+                          <Checkbox
+                            checked={picked}
+                            onCheckedChange={() => toggleSelected(group.key)}
+                            aria-label={`Select ${group.cardName}${group.foil ? " (foil)" : ""}`}
+                            className="border-slate-500 data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500"
+                          />
+                        </label>
+
+                        {/* Reports a count rather than doing anything, so it is
+                            not a button — but it is sized to the sm button
+                            variant (h-8, text-xs) so it reads as Edit's sibling. */}
+                        <span className="inline-flex h-8 flex-1 items-center justify-center rounded-md border border-cyan-500 px-2 text-xs font-medium text-cyan-400">
+                          Total: {group.totalQuantity}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleEditCard(group)}
+                          aria-label={`Edit ${group.cardName}${group.foil ? " (foil)" : ""}`}
+                          className="flex-1 border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
+                        >
+                          <Pencil className="mr-1 h-3 w-3" />
+                          Edit
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </main>
@@ -681,6 +875,29 @@ export default function CollectionPage() {
                                   className="bg-slate-700 border-slate-600 text-white mt-1"
                                 />
                               </div>
+                              {/* Foil is per place, not per card: two copies in
+                                  Box 3 and one foil in the same box are separate
+                                  rows, which is what the place key now allows. */}
+                              <label
+                                className={`mb-1 inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs ${
+                                  place.foil
+                                    ? "border-cyan-500 bg-cyan-500/10 text-cyan-300"
+                                    : "border-slate-600 text-slate-400 hover:text-white"
+                                }`}
+                                title="Are these copies foil?"
+                              >
+                                <Checkbox
+                                  checked={place.foil}
+                                  onCheckedChange={(checked) =>
+                                    updatePlace(index, { foil: checked === true })
+                                  }
+                                  aria-label="Foil copies"
+                                  className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500"
+                                />
+                                <Sparkles className="h-3 w-3" />
+                                Foil
+                              </label>
+
                               <Button
                                 size="sm"
                                 variant="ghost"
