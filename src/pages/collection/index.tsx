@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
@@ -24,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Loader2, Plus, Pencil, Share2, Trash2, Package, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   BUCKETS,
@@ -374,17 +375,37 @@ export default function CollectionPage() {
               </div>
             </div>
             
-            <Button
-              onClick={() => router.push("/cards")}
-              className="bg-cyan-500 hover:bg-cyan-600 text-white"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add Cards
-            </Button>
-          </div>
+            <div className="flex items-center gap-2">
+              {/* Sharing is occasional, so it opens rather than occupying the
+                  top of the page. The panel itself is unchanged — it keeps its
+                  own card and heading and the dialog only positions it, which
+                  is why DialogContent is a bare frame. The title is present but
+                  visually hidden: the panel already shows "Sharing", and a
+                  dialog with no title at all is unlabelled for screen readers. */}
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
+                  >
+                    <Share2 className="mr-2 h-4 w-4" />
+                    Sharing
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0 bg-transparent p-0 shadow-none">
+                  <DialogTitle className="sr-only">Sharing</DialogTitle>
+                  <CollectionShares userId={user.id} />
+                </DialogContent>
+              </Dialog>
 
-          <div className="mb-6">
-            <CollectionShares userId={user.id} />
+              <Button
+                onClick={() => router.push("/cards")}
+                className="bg-cyan-500 hover:bg-cyan-600 text-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Cards
+              </Button>
+            </div>
           </div>
 
           <div className="mb-6">
