@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      collection_previews: {
+        Row: {
+          card_id: string
+          card_name: string
+          created_at: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          card_id: string
+          card_name: string
+          created_at?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          card_id?: string
+          card_name?: string
+          created_at?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_previews_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_previews_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       collection_shares: {
         Row: {
           created_at: string
