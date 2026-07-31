@@ -88,22 +88,34 @@ const config: Config = {
             height: "0",
           },
         },
-        // The highlight that travels across a foil card as it catches the light.
-        // Starts and ends off the card, so the sweep reads as a pass rather than
-        // a pulse.
+        // The band of colour that travels across a foil card as it catches the
+        // light. Starts and ends clear of the card, so it reads as a pass rather
+        // than a pulse.
         "foil-sweep": {
           "0%": {
-            transform: "translateX(-120%) skewX(-12deg)",
+            transform: "translateX(-110%) skewX(-12deg)",
           },
           "100%": {
-            transform: "translateX(320%) skewX(-12deg)",
+            transform: "translateX(310%) skewX(-12deg)",
+          },
+        },
+        // The static rainbow drifts its hues slowly in the opposite direction, so
+        // the card is never quite the same colour twice and the tint does not read
+        // as a printed gradient.
+        "foil-shift": {
+          "0%, 100%": {
+            "background-position": "0% 50%",
+          },
+          "50%": {
+            "background-position": "100% 50%",
           },
         },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
-        "foil-sweep": "foil-sweep 3.5s linear infinite",
+        "foil-sweep": "foil-sweep 1.8s linear infinite",
+        "foil-shift": "foil-shift 6s ease-in-out infinite",
       },
     },
   },
