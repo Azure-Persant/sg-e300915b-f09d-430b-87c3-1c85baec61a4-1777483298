@@ -14,6 +14,8 @@ export type DeckCard = Tables<"deck_cards">;
 /** A deck card with the printing it points at, as every deck view needs both. */
 export interface DeckCardWithCard extends Omit<DeckCard, "section"> {
   section: DeckSection;
+  /** Whether this row asks for foil copies. Part of the row's identity. */
+  foil: boolean;
   cards: Tables<"cards"> & { sets: Tables<"sets"> | null };
 }
 
@@ -232,7 +234,8 @@ export const deckService = {
     deckId: string,
     cardId: string,
     quantity: number,
-    section: DeckSection = "main"
+    section: DeckSection = "main",
+    foil = false
   ): Promise<void> {
     const { data: existing, error: readError } = await supabase
       .from("deck_cards")
@@ -240,12 +243,13 @@ export const deckService = {
       .eq("deck_id", deckId)
       .eq("card_id", cardId)
       .eq("section", section)
+      .eq("foil", foil)
       .maybeSingle();
 
     if (readError) throw readError;
 
     if (existing) {
-      await this.updateDeckCard(deckId, cardId, existing.quantity + quantity, section);
+      await this.updateDeckCard(deckId, cardId, existing.quantity + quantity, section, foil);
       return;
     }
 
@@ -254,6 +258,7 @@ export const deckService = {
       card_id: cardId,
       quantity,
       section,
+      foil,
     };
     const { error } = await supabase.from("deck_cards").insert(payload);
     if (error) throw error;
@@ -265,10 +270,11 @@ export const deckService = {
     deckId: string,
     cardId: string,
     quantity: number,
-    section: DeckSection = "main"
+    section: DeckSection = "main",
+    foil = false
   ): Promise<void> {
     if (quantity <= 0) {
-      return this.removeCardFromDeck(deckId, cardId, section);
+      return this.removeCardFromDeck(deckId, cardId, section, foil);
     }
 
     const payload: TablesUpdate<"deck_cards"> = { quantity };
@@ -277,7 +283,8 @@ export const deckService = {
       .update(payload)
       .eq("deck_id", deckId)
       .eq("card_id", cardId)
-      .eq("section", section);
+      .eq("section", section)
+      .eq("foil", foil);
 
     if (error) throw error;
     await this.touch(deckId);
@@ -286,14 +293,16 @@ export const deckService = {
   async removeCardFromDeck(
     deckId: string,
     cardId: string,
-    section: DeckSection = "main"
+    section: DeckSection = "main",
+    foil = false
   ): Promise<void> {
     const { error } = await supabase
       .from("deck_cards")
       .delete()
       .eq("deck_id", deckId)
       .eq("card_id", cardId)
-      .eq("section", section);
+      .eq("section", section)
+      .eq("foil", foil);
 
     if (error) throw error;
     await this.touch(deckId);
@@ -313,18 +322,19 @@ export const deckService = {
     from: DeckSection,
     to: DeckSection,
     copies: number,
-    heldInFrom: number
+    heldInFrom: number,
+    foil = false
   ): Promise<void> {
     if (from === to || copies < 1) return;
 
     const moving = Math.min(copies, heldInFrom);
     if (moving >= heldInFrom) {
-      await this.removeCardFromDeck(deckId, cardId, from);
+      await this.removeCardFromDeck(deckId, cardId, from, foil);
     } else {
-      await this.updateDeckCard(deckId, cardId, heldInFrom - moving, from);
+      await this.updateDeckCard(deckId, cardId, heldInFrom - moving, from, foil);
     }
 
-    await this.addCardToDeck(deckId, cardId, moving, to);
+    await this.addCardToDeck(deckId, cardId, moving, to, foil);
   },
 
   /**
@@ -339,7 +349,8 @@ export const deckService = {
     deckId: string,
     section: DeckSection,
     fromCardId: string,
-    toCardId: string
+    toCardId: string,
+    foil = false
   ): Promise<void> {
     if (fromCardId === toCardId) return;
 
@@ -349,13 +360,14 @@ export const deckService = {
       .eq("deck_id", deckId)
       .eq("card_id", fromCardId)
       .eq("section", section)
+      .eq("foil", foil)
       .maybeSingle();
 
     if (error) throw error;
     if (!existing) return;
 
-    await this.removeCardFromDeck(deckId, fromCardId, section);
-    await this.addCardToDeck(deckId, toCardId, existing.quantity, section);
+    await this.removeCardFromDeck(deckId, fromCardId, section, foil);
+    await this.addCardToDeck(deckId, toCardId, existing.quantity, section, foil);
 
     // The old printing may have been the deck's art. Point it at the new one
     // rather than leaving the deck showing a card it no longer contains.
@@ -368,6 +380,38 @@ export const deckService = {
     if (deck?.cover_card_id === fromCardId) {
       await this.setCoverCard(deckId, toCardId);
     }
+  },
+
+  /**
+   * Change a row's finish, keeping the printing and the count.
+   *
+   * Merges rather than colliding if the deck already holds that printing in that
+   * section in the target finish — asking for foil when a foil row already exists
+   * means one row with both counts, not a unique-index violation.
+   */
+  async setDeckCardFoil(
+    deckId: string,
+    cardId: string,
+    section: DeckSection,
+    fromFoil: boolean,
+    toFoil: boolean
+  ): Promise<void> {
+    if (fromFoil === toFoil) return;
+
+    const { data: existing, error } = await supabase
+      .from("deck_cards")
+      .select("quantity")
+      .eq("deck_id", deckId)
+      .eq("card_id", cardId)
+      .eq("section", section)
+      .eq("foil", fromFoil)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!existing) return;
+
+    await this.removeCardFromDeck(deckId, cardId, section, fromFoil);
+    await this.addCardToDeck(deckId, cardId, existing.quantity, section, toFoil);
   },
 
   /** Every printing of one card, for the per-card art picker. */
@@ -447,7 +491,7 @@ export const deckService = {
       // that section; the pasted quantity wins.
       const { error } = await supabase
         .from("deck_cards")
-        .upsert(rows, { onConflict: "deck_id,card_id,section" });
+        .upsert(rows, { onConflict: "deck_id,card_id,section,foil" });
       if (error) throw error;
     }
 
