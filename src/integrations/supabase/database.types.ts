@@ -226,6 +226,7 @@ export type Database = {
           card_id: string
           created_at: string | null
           deck_id: string
+          foil: boolean
           id: string
           quantity: number
           section: string
@@ -234,6 +235,7 @@ export type Database = {
           card_id: string
           created_at?: string | null
           deck_id: string
+          foil?: boolean
           id?: string
           quantity?: number
           section?: string
@@ -242,6 +244,7 @@ export type Database = {
           card_id?: string
           created_at?: string | null
           deck_id?: string
+          foil?: boolean
           id?: string
           quantity?: number
           section?: string
