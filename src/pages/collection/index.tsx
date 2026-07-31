@@ -696,8 +696,23 @@ export default function CollectionPage() {
                             asked for reduced motion. */}
                         {group.foil && (
                           <span aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-                            <span className="absolute inset-0 bg-[linear-gradient(115deg,rgba(255,0,128,0.45),rgba(255,214,0,0.45),rgba(0,255,170,0.45),rgba(0,140,255,0.45),rgba(180,0,255,0.45))] opacity-40 mix-blend-color-dodge" />
-                            <span className="absolute inset-y-0 left-0 w-1/3 animate-foil-sweep bg-gradient-to-r from-transparent via-white/70 to-transparent motion-reduce:animate-none" />
+                            {/* The rainbow mask. Overlay rather than color-dodge:
+                                dodge is base / (1 - blend), which clips to white
+                                wherever the art is bright, so the tint survived
+                                only in the darkest corner and the rest went hazy.
+                                Overlay keeps the art's lights and darks and tints
+                                them instead. The gradient is oversized so its
+                                hues can drift across without showing an edge. */}
+                            <span className="absolute inset-0 animate-foil-shift bg-[linear-gradient(115deg,rgba(255,64,160,0.55),rgba(255,196,64,0.55),rgba(120,255,180,0.55),rgba(64,176,255,0.55),rgba(190,110,255,0.55),rgba(255,64,160,0.55))] bg-[length:300%_300%] mix-blend-overlay motion-reduce:animate-none" />
+
+                            {/* The travelling band, rainbow rather than white so
+                                the movement carries colour too. */}
+                            <span className="absolute inset-y-0 left-0 w-1/2 animate-foil-sweep bg-[linear-gradient(100deg,transparent_0%,rgba(255,80,80,0.65)_18%,rgba(255,225,90,0.65)_34%,rgba(90,255,190,0.65)_50%,rgba(90,190,255,0.65)_66%,rgba(210,90,255,0.65)_82%,transparent_100%)] mix-blend-overlay motion-reduce:animate-none" />
+
+                            {/* A thin specular streak on top, which is the part
+                                that actually reads as "shiny". Screen blend, kept
+                                faint so it highlights rather than washes out. */}
+                            <span className="absolute inset-y-0 left-0 w-1/6 animate-foil-sweep bg-gradient-to-r from-transparent via-white/45 to-transparent mix-blend-screen motion-reduce:animate-none" />
                           </span>
                         )}
 
