@@ -88,10 +88,22 @@ const config: Config = {
             height: "0",
           },
         },
+        // The highlight that travels across a foil card as it catches the light.
+        // Starts and ends off the card, so the sweep reads as a pass rather than
+        // a pulse.
+        "foil-sweep": {
+          "0%": {
+            transform: "translateX(-120%) skewX(-12deg)",
+          },
+          "100%": {
+            transform: "translateX(320%) skewX(-12deg)",
+          },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "foil-sweep": "foil-sweep 3.5s linear infinite",
       },
     },
   },
