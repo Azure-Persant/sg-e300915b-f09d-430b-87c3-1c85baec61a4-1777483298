@@ -706,13 +706,12 @@ export default function CollectionPage() {
                             <span className="absolute inset-0 animate-foil-shift bg-[linear-gradient(115deg,rgba(255,64,160,0.55),rgba(255,196,64,0.55),rgba(120,255,180,0.55),rgba(64,176,255,0.55),rgba(190,110,255,0.55),rgba(255,64,160,0.55))] bg-[length:300%_300%] mix-blend-overlay motion-reduce:animate-none" />
 
                             {/* The travelling band, rainbow rather than white so
-                                the movement carries colour too. */}
+                                the movement carries colour too. A white specular
+                                streak used to ride on top of this, but it was
+                                indistinguishable from the original white sweep
+                                and read as a second effect running alongside the
+                                rainbow, so it is gone. */}
                             <span className="absolute inset-y-0 left-0 w-1/2 animate-foil-sweep bg-[linear-gradient(100deg,transparent_0%,rgba(255,80,80,0.65)_18%,rgba(255,225,90,0.65)_34%,rgba(90,255,190,0.65)_50%,rgba(90,190,255,0.65)_66%,rgba(210,90,255,0.65)_82%,transparent_100%)] mix-blend-overlay motion-reduce:animate-none" />
-
-                            {/* A thin specular streak on top, which is the part
-                                that actually reads as "shiny". Screen blend, kept
-                                faint so it highlights rather than washes out. */}
-                            <span className="absolute inset-y-0 left-0 w-1/6 animate-foil-sweep bg-gradient-to-r from-transparent via-white/45 to-transparent mix-blend-screen motion-reduce:animate-none" />
                           </span>
                         )}
 
