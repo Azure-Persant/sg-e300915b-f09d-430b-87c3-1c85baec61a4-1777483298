@@ -53,12 +53,17 @@ import {
   type DeckSection,
 } from "@/lib/deckList";
 import {
-  belongsInMaterial,
+  MATERIAL_SIDEBOARD_POINTS,
   checkDeck,
+  costFamily,
+  homeSection,
+  pointsFor,
   sectionCounts,
   sectionForCard,
+  swapTarget,
   type RuleCard,
 } from "@/lib/deckRules";
+import { referencesToken } from "@/lib/deckImport";
 import {
   RARITY_LABELS,
   cardService,
@@ -67,7 +72,12 @@ import {
   type Set as SetRow,
 } from "@/services/cardService";
 import { collectionService, type CardOwnership } from "@/services/collectionService";
-import { deckService, type DeckCardWithCard, type DeckWithCards } from "@/services/deckService";
+import {
+  deckService,
+  type ArtOption,
+  type DeckCardWithCard,
+  type DeckWithCards,
+} from "@/services/deckService";
 
 /** "LESSER BOON" -> "Lesser Boon", for the type dropdown labels. */
 const toTitleCase = (text: string): string =>
@@ -110,6 +120,8 @@ export default function DeckDetailPage() {
   const [ownership, setOwnership] = useState<Map<string, CardOwnership>>(new Map());
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
+  /** Every token printing in the catalog — a few dozen rows, fetched once. */
+  const [tokenCards, setTokenCards] = useState<ArtOption[]>([]);
   const cardsPerPage = 60;
 
   useEffect(() => {
@@ -143,17 +155,21 @@ export default function DeckDetailPage() {
   const loadReferenceData = async () => {
     if (!user) return;
     try {
-      const [setsData, ownershipMap, filterOptions] = await Promise.all([
+      const [setsData, ownershipMap, filterOptions, tokens] = await Promise.all([
         cardService.getAllSets(),
         // Summed across buckets and locations, rather than reading whichever
         // holding row came back first.
         collectionService.getOwnershipMap(user.id),
         cardService.getFilterOptions(),
+        // The catalog's token cards, so the Tokens section can be worked out
+        // from the deck's card text without a query per deck card.
+        deckService.tokenPrintings(),
       ]);
 
       setSets(setsData.slice().sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)));
       setTypeOptions(filterOptions.types);
       setOwnership(ownershipMap);
+      setTokenCards(tokens);
     } catch (error) {
       console.error("Error loading reference data:", error);
     }
@@ -210,7 +226,7 @@ export default function DeckDetailPage() {
    */
   const handleAddCard = (card: CardWithSet) =>
     withDeck(
-      () => deckService.addCardToDeck(deck!.id, card.id, 1, sectionForCard(card.types, "main")),
+      () => deckService.addCardToDeck(deck!.id, card.id, 1, sectionForCard(card, "main")),
       "Could not add that card"
     );
 
@@ -263,6 +279,8 @@ export default function DeckDetailPage() {
         cardId: row.card_id,
         name: row.cards.name,
         types: row.cards.types,
+        costMemory: row.cards.cost_memory,
+        costReserve: row.cards.cost_reserve,
         isRestricted: row.cards.is_restricted,
         quantity: row.quantity,
         section: row.section,
@@ -273,6 +291,29 @@ export default function DeckDetailPage() {
   const problems = useMemo(() => checkDeck(ruleCards), [ruleCards]);
   const counts = useMemo(() => sectionCounts(ruleCards), [ruleCards]);
   const errors = problems.filter((problem) => problem.severity === "error");
+
+  /**
+   * Tokens the deck creates, one preview each.
+   *
+   * Read from the deck's own card text against the catalog's token cards, which
+   * is the relationship this app already has — no card names are hardcoded.
+   * Informational only: nothing here reaches the rules, the counts, the
+   * sideboard points or the inventory check.
+   */
+  const tokens = useMemo(() => {
+    const effectText = (deck?.deck_cards ?? [])
+      .map((row) => row.cards.effect_text ?? "")
+      .join("\n");
+    if (!effectText.trim()) return [];
+
+    const byName = new Map<string, (typeof tokenCards)[number]>();
+    for (const token of tokenCards) {
+      if (byName.has(token.name)) continue;
+      if (referencesToken(effectText, token.name)) byName.set(token.name, token);
+    }
+
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [deck, tokenCards]);
 
   const sections = useMemo(() => {
     const cards = deck?.deck_cards ?? [];
@@ -556,9 +597,11 @@ export default function DeckDetailPage() {
                                 {card.name}
                               </p>
                               <p className="text-xs text-slate-500">
-                                {belongsInMaterial(card.types)
+                                {homeSection(card) === "material"
                                   ? "→ Material Deck"
-                                  : "→ Main Deck"}
+                                  : homeSection(card) === "main"
+                                    ? "→ Main Deck"
+                                    : "→ no cost, section unknown"}
                               </p>
                             </div>
                           </button>
@@ -577,15 +620,25 @@ export default function DeckDetailPage() {
               {counts.map((count) => (
                 <div key={count.section}>
                   <p className="text-xs uppercase tracking-wide text-slate-500">{count.label}</p>
+                  {/* The sideboard is measured in points, so it shows points and
+                      keeps the card count as the smaller line beneath. */}
                   <p className={`text-xl font-bold ${count.ok ? "text-white" : "text-amber-400"}`}>
-                    {count.copies}
+                    {count.value}
                     {count.target !== null && (
                       <span className="text-sm font-normal text-slate-500">
                         {count.section === "main" ? " / min " : " / "}
                         {count.target}
+                        {count.unit === "points" && " pts"}
                       </span>
                     )}
                   </p>
+                  {count.unit === "points" && (
+                    <p className="text-xs text-slate-500">
+                      {count.copies} card{count.copies === 1 ? "" : "s"}
+                      {" · material cards cost "}
+                      {MATERIAL_SIDEBOARD_POINTS}
+                    </p>
+                  )}
                 </div>
               ))}
 
@@ -682,41 +735,89 @@ export default function DeckDetailPage() {
           </Card>
 
           <div className="space-y-4">
-            {sections.map(({ section, rows, copies }) => (
-              <Card key={section} className="border-slate-700 bg-slate-800/50">
+            {sections.map(({ section, rows, copies }) => {
+              const points = counts.find((count) => count.section === section);
+              return (
+                <Card key={section} className="border-slate-700 bg-slate-800/50">
+                  <CardContent className="p-3">
+                    <div className="mb-2 flex items-center justify-between px-1">
+                      <h2 className="text-lg font-bold text-white">{SECTION_LABELS[section]}</h2>
+                      <span className="text-sm text-slate-400">
+                        {copies} card{copies === 1 ? "" : "s"}
+                        {section === "sideboard" && points && ` · ${points.value} points`}
+                      </span>
+                    </div>
+
+                    {rows.length === 0 ? (
+                      <p className="py-4 text-center text-sm text-slate-500">Nothing here yet.</p>
+                    ) : (
+                      <div className={DECK_GRID}>
+                        {rows.map((row) => (
+                          <DeckCard
+                            key={row.id}
+                            row={row}
+                            held={ownership.get(row.card_id) ?? EMPTY_OWNERSHIP}
+                            onQuantity={(quantity) =>
+                              handleUpdateQuantity(row.card_id, quantity, row.section)
+                            }
+                            onMove={(to, copiesToMove) =>
+                              handleMoveCopies(
+                                row.card_id,
+                                row.section,
+                                to,
+                                copiesToMove,
+                                row.quantity
+                              )
+                            }
+                            onSwapPrinting={(toCardId) =>
+                              handleSwapPrinting(row.section, row.card_id, toCardId)
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+
+            {/* Tokens the deck creates. Shown only when there are any, and never
+                counted: no deck size, no sideboard points, no inventory, no copy
+                limit. There is nothing to adjust, so no controls. */}
+            {tokens.length > 0 && (
+              <Card className="border-slate-700 bg-slate-800/50">
                 <CardContent className="p-3">
                   <div className="mb-2 flex items-center justify-between px-1">
-                    <h2 className="text-lg font-bold text-white">{SECTION_LABELS[section]}</h2>
+                    <h2 className="text-lg font-bold text-white">Tokens</h2>
                     <span className="text-sm text-slate-400">
-                      {copies} card{copies === 1 ? "" : "s"}
+                      created by this deck · not part of any count
                     </span>
                   </div>
 
-                  {rows.length === 0 ? (
-                    <p className="py-4 text-center text-sm text-slate-500">Nothing here yet.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {rows.map((row) => (
-                        <DeckRow
-                          key={row.id}
-                          row={row}
-                          held={ownership.get(row.card_id) ?? EMPTY_OWNERSHIP}
-                          onQuantity={(quantity) =>
-                            handleUpdateQuantity(row.card_id, quantity, row.section)
-                          }
-                          onMove={(to, copiesToMove) =>
-                            handleMoveCopies(row.card_id, row.section, to, copiesToMove, row.quantity)
-                          }
-                          onSwapPrinting={(toCardId) =>
-                            handleSwapPrinting(row.section, row.card_id, toCardId)
-                          }
+                  <div className={DECK_GRID}>
+                    {tokens.map((token) => (
+                      <div
+                        key={token.id}
+                        className="overflow-hidden rounded border border-slate-700/70 bg-slate-900/40"
+                      >
+                        <CardImage
+                          src={token.image_url}
+                          alt={token.name}
+                          variant="tile"
+                          className="h-auto w-full object-contain"
                         />
-                      ))}
-                    </div>
-                  )}
+                        <p
+                          className="truncate px-1 py-1 text-center text-[11px] text-slate-400"
+                          title={token.name}
+                        >
+                          {token.name}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
-            ))}
+            )}
           </div>
         </main>
       </div>
@@ -724,7 +825,22 @@ export default function DeckDetailPage() {
   );
 }
 
-function DeckRow({
+/**
+ * Twelve tiles across on a wide desktop, down to two on a phone. The count is
+ * per breakpoint rather than auto-fit because the row of controls under each card
+ * has a floor below which it stops being usable, and auto-fit would happily go
+ * past it.
+ */
+const DECK_GRID =
+  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-9 2xl:grid-cols-12";
+
+/**
+ * One card in a deck: its art, then the controls.
+ *
+ * The image is width-driven with an automatic height and object-contain, so the
+ * whole card is visible at every column count — no fixed height, nothing cropped.
+ */
+function DeckCard({
   row,
   held,
   onQuantity,
@@ -740,127 +856,174 @@ function DeckRow({
   const card = row.cards;
   const onHand = onHandOf(held);
   const short = Math.max(0, row.quantity - onHand);
-  /** Material cards have only one legal home, so there is nowhere to move them. */
-  const moveTarget: DeckSection | null =
-    row.section === "main" ? "sideboard" : row.section === "sideboard" ? "main" : null;
+
+  /**
+   * Where the swap sends it, from the card's cost rather than the list it is in.
+   * A sideboarded regalia goes back to the material deck; it used to go to the
+   * main deck, because the old rule was "sideboard means main".
+   */
+  const target = swapTarget(card, row.section);
+  const family = costFamily(card);
+  const sideboardCost = pointsFor({ ...toRuleCard(row), quantity: 1 });
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-700/70 bg-slate-900/40 px-2 py-1.5 transition-colors hover:border-slate-600">
-      {/* Clicking the card is how you change which printing the deck uses. */}
-      <PrintingPicker
-        cardName={card.name}
-        currentCardId={row.card_id}
-        onSelect={onSwapPrinting}
-      >
-        <button
-          type="button"
-          title={`${card.name} — click to change the art`}
-          className="shrink-0 overflow-hidden rounded border border-transparent transition-colors hover:border-cyan-400"
+    <div className="overflow-hidden rounded border border-slate-700/70 bg-slate-900/40 transition-colors hover:border-slate-600">
+      <div className="relative">
+        <PrintingPicker
+          cardName={card.name}
+          currentCardId={row.card_id}
+          onSelect={onSwapPrinting}
         >
-          <CardImage
-            src={card.image_url}
-            alt={card.name}
-            variant="row"
-            className="h-14 w-auto"
-          />
-        </button>
-      </PrintingPicker>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h3 className="truncate font-semibold text-white">{card.name}</h3>
-
-          {short > 0 && (
-            <HoverCard openDelay={100}>
-              <HoverCardTrigger asChild>
-                <span className="cursor-help text-amber-400">
-                  <AlertTriangle className="h-4 w-4" />
-                </span>
-              </HoverCardTrigger>
-              <HoverCardContent className="w-72 border-slate-700 bg-slate-900 text-sm text-slate-200">
-                <p className="font-medium text-amber-300">
-                  {short} more needed
-                </p>
-                <p className="mt-1">
-                  This deck asks for {row.quantity} and you have {onHand} on hand
-                  {held.loaned > 0 && `, with ${held.loaned} lent out`}.
-                </p>
-                {held.locations.length > 0 && (
-                  <p className="mt-1 text-slate-400">In: {held.locations.join(", ")}</p>
-                )}
-              </HoverCardContent>
-            </HoverCard>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 text-xs">
-          <Badge
-            variant="outline"
-            className="h-5 border-cyan-500/70 px-1.5 font-mono text-cyan-400"
+          <button
+            type="button"
+            title={`${card.name} — click to change the art`}
+            aria-label={`Change the printing of ${card.name}`}
+            className="block w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
-            {card.sets?.code ?? "???"}
-          </Badge>
-          {card.element && <span className="text-slate-400">{card.element}</span>}
-          {card.is_restricted && (
-            <Badge className="h-5 bg-amber-500/20 px-1.5 text-amber-300">Restricted</Badge>
-          )}
-        </div>
+            <CardImage
+              src={card.image_url}
+              alt={card.name}
+              variant="tile"
+              className="h-auto w-full object-contain"
+            />
+          </button>
+        </PrintingPicker>
+
+        {short > 0 && (
+          <HoverCard openDelay={100}>
+            <HoverCardTrigger asChild>
+              <span
+                tabIndex={0}
+                role="button"
+                aria-label={`${card.name}: ${short} more needed`}
+                className="absolute right-1 top-1 cursor-help rounded bg-amber-500 p-0.5 text-slate-900 shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+              </span>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-72 border-slate-700 bg-slate-900 text-sm text-slate-200">
+              <p className="font-medium text-white">{card.name}</p>
+              <p className="mt-1 text-amber-300">{short} more needed</p>
+              <p className="mt-1">
+                This deck asks for {row.quantity} and you have {onHand} on hand
+                {held.loaned > 0 && `, with ${held.loaned} lent out`}.
+              </p>
+              {held.locations.length > 0 && (
+                <p className="mt-1 text-slate-400">In: {held.locations.join(", ")}</p>
+              )}
+            </HoverCardContent>
+          </HoverCard>
+        )}
       </div>
 
-      {moveTarget && (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              title={`Move copies to the ${SECTION_LABELS[moveTarget].toLowerCase()}`}
-              className="h-8 border-slate-600 text-slate-300 hover:bg-slate-800 hover:text-white"
-            >
-              <ArrowLeftRight className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto border-slate-700 bg-slate-900 p-3 text-slate-200">
-            <p className="mb-2 text-sm">
-              Move to <span className="font-medium text-white">{SECTION_LABELS[moveTarget]}</span>
-            </p>
-            <div className="flex gap-1">
-              {Array.from({ length: row.quantity }, (_, index) => index + 1).map((copies) => (
-                <Button
-                  key={copies}
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onMove(moveTarget, copies)}
-                  className="h-8 w-8 border-slate-600 p-0 text-slate-200 hover:bg-cyan-600 hover:text-white"
-                >
-                  {copies}
-                </Button>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
-      )}
+      <div className="flex items-center justify-center gap-0.5 px-1 py-1">
+        {/* Every section gets a swap, the material deck included — a spare
+            regalia is a normal sideboard card. Disabled only when the catalog
+            gives no cost to derive a destination from. */}
+        {target ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                title={`Move copies to the ${SECTION_LABELS[target].toLowerCase()}`}
+                aria-label={`Move copies of ${card.name} to the ${SECTION_LABELS[target]}`}
+                className="h-6 w-6 shrink-0 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto border-slate-700 bg-slate-900 p-3 text-slate-200">
+              <p className="mb-2 text-sm">
+                Move to <span className="font-medium text-white">{SECTION_LABELS[target]}</span>
+              </p>
+              {target === "sideboard" && (
+                <p className="mb-2 text-xs text-slate-400">
+                  {sideboardCost} sideboard point{sideboardCost === 1 ? "" : "s"} per copy
+                </p>
+              )}
+              <div className="flex gap-1">
+                {Array.from({ length: row.quantity }, (_, index) => index + 1).map((copies) => (
+                  <Button
+                    key={copies}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onMove(target, copies)}
+                    className="h-8 w-8 border-slate-600 p-0 text-slate-200 hover:bg-cyan-600 hover:text-white"
+                  >
+                    {copies}
+                  </Button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <HoverCard openDelay={100}>
+            <HoverCardTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled
+                aria-label={`${card.name} cannot be moved: no cost in the catalog`}
+                className="h-6 w-6 shrink-0 text-slate-600"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-72 border-slate-700 bg-slate-900 text-sm text-slate-200">
+              {card.name} has neither a memory nor a reserve cost in the catalog, so
+              there is no way to tell which deck it belongs to. Moving it is disabled
+              rather than guessing.
+            </HoverCardContent>
+          </HoverCard>
+        )}
 
-      <div className="flex items-center gap-1.5">
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
           title={row.quantity === 1 ? "Remove from deck" : "One fewer"}
+          aria-label={`One fewer ${card.name}`}
           onClick={() => onQuantity(row.quantity - 1)}
-          className="h-8 w-8 border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+          className="h-6 w-6 shrink-0 text-slate-400 hover:bg-slate-800 hover:text-white"
         >
-          <Minus className="h-4 w-4" />
+          <Minus className="h-3.5 w-3.5" />
         </Button>
-        <span className="w-6 text-center font-semibold text-white">{row.quantity}</span>
+
+        <span className="w-4 text-center text-xs font-semibold text-white">{row.quantity}</span>
+
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
           title="One more"
+          aria-label={`One more ${card.name}`}
           onClick={() => onQuantity(row.quantity + 1)}
-          className="h-8 w-8 border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+          className="h-6 w-6 shrink-0 text-slate-400 hover:bg-slate-800 hover:text-white"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
         </Button>
       </div>
+
+      {/* Kept for the restricted marker only; the set code and rarity moved out
+          when the tiles became art-first. */}
+      {(card.is_restricted || family === "unknown") && (
+        <p className="px-1 pb-1 text-center text-[10px] leading-tight text-amber-300">
+          {card.is_restricted ? "Restricted" : "No cost"}
+        </p>
+      )}
     </div>
   );
+}
+
+/** The rules-shaped view of a deck row, for the per-copy point cost. */
+function toRuleCard(row: DeckCardWithCard): RuleCard {
+  return {
+    cardId: row.card_id,
+    name: row.cards.name,
+    types: row.cards.types,
+    costMemory: row.cards.cost_memory,
+    costReserve: row.cards.cost_reserve,
+    isRestricted: row.cards.is_restricted,
+    quantity: row.quantity,
+    section: row.section,
+  };
 }
