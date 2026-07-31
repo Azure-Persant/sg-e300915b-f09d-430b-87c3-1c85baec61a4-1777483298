@@ -51,6 +51,8 @@ export interface CardOwnership {
   total: number;
   /** Of the total, how many are foil. Foils are playable, so they count as held. */
   foil: number;
+  /** Foil copies in hand — personal or for sale, so not the ones lent out. */
+  foilOnHand: number;
   /** Distinct place names holding this card, owner-only information. */
   locations: string[];
 }
@@ -313,11 +315,22 @@ export const collectionService = {
       const bucket = row.bucket as CollectionBucket;
       const current =
         map.get(row.card_id) ??
-        ({ personal: 0, sale: 0, loaned: 0, total: 0, foil: 0, locations: [] } as CardOwnership);
+        ({
+          personal: 0,
+          sale: 0,
+          loaned: 0,
+          total: 0,
+          foil: 0,
+          foilOnHand: 0,
+          locations: [],
+        } as CardOwnership);
 
       current[bucket] += row.quantity;
       current.total += row.quantity;
-      if (row.foil) current.foil += row.quantity;
+      if (row.foil) {
+        current.foil += row.quantity;
+        if (bucket !== "loaned") current.foilOnHand += row.quantity;
+      }
 
       const place = normaliseLocation(row.location);
       if (place && !current.locations.includes(place)) current.locations.push(place);
