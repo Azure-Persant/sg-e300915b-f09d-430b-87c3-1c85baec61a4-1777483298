@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Loader2, Plus, Pencil, Share2, Trash2, Package, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Loader2, Plus, Pencil, Share2, Trash2, Package, ChevronLeft, ChevronRight, Image as ImageIcon } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   BUCKETS,
@@ -92,6 +92,8 @@ export default function CollectionPage() {
     representativeCard: CardType;
   }
   const [groupedCollection, setGroupedCollection] = useState<GroupedCard[]>([]);
+  /** Chosen preview printing per card name — see collection_previews. */
+  const [previews, setPreviews] = useState<Map<string, string>>(new Map());
   
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedGroupedCard, setSelectedGroupedCard] = useState<GroupedCard | null>(null);
@@ -137,13 +139,15 @@ export default function CollectionPage() {
     
     try {
       setLoading(true);
-      const [collectionData, statsData] = await Promise.all([
+      const [collectionData, statsData, previewChoices] = await Promise.all([
         collectionService.getCollection(user.id),
         collectionService.getCollectionStats(user.id),
+        collectionService.getPreviewChoices(user.id),
       ]);
-      
+
       setCollection(collectionData);
       setStats(statsData);
+      setPreviews(previewChoices);
       
       // Group by card name
       const grouped = new Map<string, GroupedCard>();
@@ -174,8 +178,19 @@ export default function CollectionPage() {
         });
         if (item.bucket === 'personal') group.totalQuantity += item.quantity;
       });
-      
-      setGroupedCollection(Array.from(grouped.values()).sort((a, b) => 
+
+      // Apply the owner's chosen art. Done after grouping rather than during it,
+      // because the chosen printing is not necessarily the first one seen. A
+      // choice for a printing they no longer hold is ignored rather than
+      // deleted — giving a card away should not throw the preference away.
+      for (const group of grouped.values()) {
+        const chosenId = previewChoices.get(group.cardName);
+        if (!chosenId) continue;
+        const chosen = group.printings.find((p) => p.item.card_id === chosenId);
+        if (chosen?.item.card) group.representativeCard = chosen.item.card;
+      }
+
+      setGroupedCollection(Array.from(grouped.values()).sort((a, b) =>
         a.cardName.localeCompare(b.cardName)
       ));
     } catch (error) {
@@ -186,6 +201,44 @@ export default function CollectionPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  /** Whether this printing is the one the grid shows for the open card. */
+  const isPreviewChoice = (cardId: string): boolean =>
+    !!selectedGroupedCard && previews.get(selectedGroupedCard.cardName) === cardId;
+
+  /**
+   * Pick the art for the open card, or clear the choice if this printing is
+   * already it. Written straight away rather than on Save, because it is a
+   * display preference and nothing else in this dialog depends on it.
+   */
+  const handleChoosePreview = async (cardId: string) => {
+    if (!user || !selectedGroupedCard) return;
+    const cardName = selectedGroupedCard.cardName;
+    const clearing = isPreviewChoice(cardId);
+
+    try {
+      if (clearing) {
+        await collectionService.clearPreviewChoice(user.id, cardName);
+      } else {
+        await collectionService.setPreviewChoice(user.id, cardName, cardId);
+      }
+
+      setPreviews((current) => {
+        const next = new Map(current);
+        if (clearing) next.delete(cardName);
+        else next.set(cardName, cardId);
+        return next;
+      });
+
+      await loadCollection();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not change the preview",
+      });
     }
   };
 
@@ -392,6 +445,9 @@ export default function CollectionPage() {
                     Sharing
                   </Button>
                 </DialogTrigger>
+                {/* Opaque: the panel's own card is bg-slate-800/50, which read
+                    as solid over the page background but not over a see-through
+                    dialog. This gives that 50% something to sit on. */}
                 <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0 bg-slate-900 p-0 shadow-none">
                   <DialogTitle className="sr-only">Sharing</DialogTitle>
                   <CollectionShares userId={user.id} />
@@ -517,18 +573,47 @@ export default function CollectionPage() {
             <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
               {editCardIds.map(({ cardId, setCode }) => (
                 <div key={cardId} className="p-4 bg-slate-800 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <Badge variant="outline" className="border-cyan-500 text-cyan-400 font-mono text-sm">
                       {setCode}
                     </Badge>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleRemovePrinting(cardId)}
-                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+
+                    <div className="flex items-center gap-1">
+                      {/* Which of the printings you own is the one shown on the
+                          grid. Offered here because this list is already exactly
+                          the printings you hold — the choice cannot name a card
+                          you do not own. Choosing the current one clears it back
+                          to automatic. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleChoosePreview(cardId)}
+                        title={
+                          isPreviewChoice(cardId)
+                            ? "Shown on the collection grid — click to go back to automatic"
+                            : "Show this printing on the collection grid"
+                        }
+                        aria-pressed={isPreviewChoice(cardId)}
+                        className={
+                          isPreviewChoice(cardId)
+                            ? "h-7 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+                            : "h-7 text-slate-400 hover:bg-slate-700 hover:text-white"
+                        }
+                      >
+                        <ImageIcon className="mr-1 h-3.5 w-3.5" />
+                        {isPreviewChoice(cardId) ? "Preview" : "Use as preview"}
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleRemovePrinting(cardId)}
+                        title="Remove this printing from your collection"
+                        className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
 
                   {BUCKETS.map((bucket) => {
