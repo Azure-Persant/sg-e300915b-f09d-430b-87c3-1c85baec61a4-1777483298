@@ -392,7 +392,7 @@ export default function CollectionPage() {
                     Sharing
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0 bg-transparent p-0 shadow-none">
+                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0 bg-slate-900 p-0 shadow-none">
                   <DialogTitle className="sr-only">Sharing</DialogTitle>
                   <CollectionShares userId={user.id} />
                 </DialogContent>
