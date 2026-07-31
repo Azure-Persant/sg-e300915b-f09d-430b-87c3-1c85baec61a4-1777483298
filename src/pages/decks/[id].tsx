@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 
 import { SEO } from "@/components/SEO";
@@ -92,11 +93,17 @@ const EMPTY_OWNERSHIP: CardOwnership = {
   loaned: 0,
   total: 0,
   foil: 0,
+  foilOnHand: 0,
   locations: [],
 };
 
-/** Copies on hand — lent-out cards are owned but cannot be put in a deck. */
-const onHandOf = (held: CardOwnership): number => held.personal + held.sale;
+/**
+ * Copies on hand for a deck row. Lent-out cards are owned but cannot be put in a
+ * deck, and a row asking for foil is only satisfied by foil copies — a plain copy
+ * is not the card that row calls for.
+ */
+const onHandOf = (held: CardOwnership, foil = false): number =>
+  foil ? held.foilOnHand : held.personal + held.sale - held.foilOnHand;
 
 export default function DeckDetailPage() {
   const router = useRouter();
@@ -231,9 +238,14 @@ export default function DeckDetailPage() {
       "Could not add that card"
     );
 
-  const handleUpdateQuantity = (cardId: string, quantity: number, section: DeckSection) =>
+  const handleUpdateQuantity = (
+    cardId: string,
+    quantity: number,
+    section: DeckSection,
+    foil: boolean
+  ) =>
     withDeck(
-      () => deckService.updateDeckCard(deck!.id, cardId, quantity, section),
+      () => deckService.updateDeckCard(deck!.id, cardId, quantity, section, foil),
       "Could not change that quantity"
     );
 
@@ -242,17 +254,34 @@ export default function DeckDetailPage() {
     from: DeckSection,
     to: DeckSection,
     copies: number,
-    heldInFrom: number
+    heldInFrom: number,
+    foil: boolean
   ) =>
     withDeck(
-      () => deckService.moveCopies(deck!.id, cardId, from, to, copies, heldInFrom),
+      () => deckService.moveCopies(deck!.id, cardId, from, to, copies, heldInFrom, foil),
       "Could not move those copies"
     );
 
-  const handleSwapPrinting = (section: DeckSection, fromCardId: string, toCardId: string) =>
+  const handleSwapPrinting = (
+    section: DeckSection,
+    fromCardId: string,
+    toCardId: string,
+    foil: boolean
+  ) =>
     withDeck(
-      () => deckService.swapPrinting(deck!.id, section, fromCardId, toCardId),
+      () => deckService.swapPrinting(deck!.id, section, fromCardId, toCardId, foil),
       "Could not change the printing"
+    );
+
+  /** Switch a row between plain and foil, keeping the printing and the count. */
+  const handleToggleFoil = (
+    cardId: string,
+    section: DeckSection,
+    fromFoil: boolean
+  ) =>
+    withDeck(
+      () => deckService.setDeckCardFoil(deck!.id, cardId, section, fromFoil, !fromFoil),
+      "Could not change the finish"
     );
 
   const handleImport = async (entries: DeckListEntry[], mode: ImportMode) => {
@@ -352,8 +381,9 @@ export default function DeckDetailPage() {
 
     for (const row of deck?.deck_cards ?? []) {
       const held = ownership.get(row.card_id) ?? EMPTY_OWNERSHIP;
-      const short = row.quantity - onHandOf(held);
-      if (short > 0) byName.set(row.cards.name, (byName.get(row.cards.name) ?? 0) + short);
+      const short = row.quantity - onHandOf(held, row.foil);
+      const label = row.foil ? `${row.cards.name} (foil)` : row.cards.name;
+      if (short > 0) byName.set(label, (byName.get(label) ?? 0) + short);
     }
 
     const entries = [...byName.entries()]
@@ -759,7 +789,7 @@ export default function DeckDetailPage() {
                             row={row}
                             held={ownership.get(row.card_id) ?? EMPTY_OWNERSHIP}
                             onQuantity={(quantity) =>
-                              handleUpdateQuantity(row.card_id, quantity, row.section)
+                              handleUpdateQuantity(row.card_id, quantity, row.section, row.foil)
                             }
                             onMove={(to, copiesToMove) =>
                               handleMoveCopies(
@@ -767,11 +797,15 @@ export default function DeckDetailPage() {
                                 row.section,
                                 to,
                                 copiesToMove,
-                                row.quantity
+                                row.quantity,
+                                row.foil
                               )
                             }
                             onSwapPrinting={(toCardId) =>
-                              handleSwapPrinting(row.section, row.card_id, toCardId)
+                              handleSwapPrinting(row.section, row.card_id, toCardId, row.foil)
+                            }
+                            onToggleFoil={() =>
+                              handleToggleFoil(row.card_id, row.section, row.foil)
                             }
                           />
                         ))}
@@ -847,15 +881,17 @@ function DeckCard({
   onQuantity,
   onMove,
   onSwapPrinting,
+  onToggleFoil,
 }: {
   row: DeckCardWithCard;
   held: CardOwnership;
   onQuantity: (quantity: number) => void;
   onMove: (to: DeckSection, copies: number) => void;
   onSwapPrinting: (toCardId: string) => Promise<void>;
+  onToggleFoil: () => void;
 }) {
   const card = row.cards;
-  const onHand = onHandOf(held);
+  const onHand = onHandOf(held, row.foil);
   const short = Math.max(0, row.quantity - onHand);
 
   /**
@@ -887,6 +923,16 @@ function DeckCard({
               variant="tile"
               className="h-auto w-full object-contain"
             />
+
+            {/* Same treatment as the collection tiles, so a foil row looks like
+                the foil card it is asking for. Decorative: the Foil button below
+                is what says so in words. */}
+            {row.foil && (
+              <span aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+                <span className="absolute inset-0 animate-foil-shift bg-[linear-gradient(115deg,rgba(255,64,160,0.55),rgba(255,196,64,0.55),rgba(120,255,180,0.55),rgba(64,176,255,0.55),rgba(190,110,255,0.55),rgba(255,64,160,0.55))] bg-[length:300%_300%] mix-blend-overlay motion-reduce:animate-none" />
+                <span className="absolute inset-y-0 left-0 w-1/2 animate-foil-sweep bg-[linear-gradient(100deg,transparent_0%,rgba(255,80,80,0.65)_18%,rgba(255,225,90,0.65)_34%,rgba(90,255,190,0.65)_50%,rgba(90,190,255,0.65)_66%,rgba(210,90,255,0.65)_82%,transparent_100%)] mix-blend-overlay motion-reduce:animate-none" />
+              </span>
+            )}
           </button>
         </PrintingPicker>
 
@@ -979,6 +1025,29 @@ function DeckCard({
           </HoverCard>
         )}
 
+        {/* Foil is a property of this row, not of the printing, so it lives with
+            the quantity controls rather than in the art picker. The title says
+            what is on hand, because "wanted foil, own none" is the useful fact. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleFoil}
+          aria-pressed={row.foil}
+          title={
+            row.foil
+              ? `Asking for foil — you have ${held.foilOnHand} foil on hand. Click for plain.`
+              : `Asking for plain — you have ${held.foilOnHand} foil on hand. Click for foil.`
+          }
+          aria-label={`${card.name}: ${row.foil ? "switch to plain" : "switch to foil"}`}
+          className={`h-6 w-6 shrink-0 ${
+            row.foil
+              ? "text-cyan-300 hover:bg-slate-800 hover:text-cyan-200"
+              : "text-slate-500 hover:bg-slate-800 hover:text-white"
+          }`}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+        </Button>
+
         <Button
           variant="ghost"
           size="icon"
@@ -1006,9 +1075,14 @@ function DeckCard({
 
       {/* Kept for the restricted marker only; the set code and rarity moved out
           when the tiles became art-first. */}
-      {(card.is_restricted || family === "unknown") && (
+      {(card.is_restricted || family === "unknown" || row.foil) && (
         <p className="px-1 pb-1 text-center text-[10px] leading-tight text-amber-300">
-          {card.is_restricted ? "Restricted" : "No cost"}
+          {card.is_restricted ? "Restricted" : family === "unknown" ? "No cost" : null}
+          {row.foil && (
+            <span className={card.is_restricted || family === "unknown" ? "text-cyan-300" : "text-cyan-300"}>
+              {card.is_restricted || family === "unknown" ? " · Foil" : "Foil"}
+            </span>
+          )}
         </p>
       )}
     </div>
