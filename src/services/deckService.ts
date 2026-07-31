@@ -60,10 +60,11 @@ export interface ImportResult {
 
 // Columns needed to pick between printings and render them. Kept as one string
 // literal: concatenating it defeats supabase-js's type inference.
-// types is here because the section a card goes to is derived from it, not asked
-// for: champions and regalia are material deck cards.
+// The costs and types are here because the section a card goes to is derived from
+// them, not asked for: a memory cost means a material deck card, a reserve cost a
+// main deck card.
 const PRINTING_PICK_COLUMNS =
-  "id, name, card_number, image_url, rarity, types, set_id, sets(code, name, rank)";
+  "id, name, card_number, image_url, rarity, types, cost_memory, cost_reserve, set_id, sets(code, name, rank)";
 
 /** Shape returned by PRINTING_PICK_COLUMNS. */
 interface PrintingRow {
@@ -73,6 +74,8 @@ interface PrintingRow {
   image_url: string | null;
   rarity: string;
   types: string[];
+  cost_memory: number | null;
+  cost_reserve: number | null;
   set_id: string;
   sets: { code: string; name: string; rank: number } | null;
 }
@@ -412,7 +415,7 @@ export const deckService = {
 
       // The heading is a hint, not the answer: a champion or regalia is a
       // material deck card wherever the list happened to put it.
-      const section = sectionForCard(printing.types, entry.section);
+      const section = sectionForCard(printing, entry.section);
 
       const key = `${printing.id}:${section}`;
       const already = wanted.get(key);
