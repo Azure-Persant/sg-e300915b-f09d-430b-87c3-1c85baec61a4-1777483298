@@ -22,8 +22,9 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RefreshCw, Database, Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, RefreshCw, Database, Plus, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { CardFilterBar } from "@/components/CardFilterBar";
 import type {
@@ -80,6 +81,7 @@ export default function CardsPage() {
   const [addToCollectionOpen, setAddToCollectionOpen] = useState(false);
   const [addQuantity, setAddQuantity] = useState(1);
   const [addLocation, setAddLocation] = useState("");
+  const [addFoil, setAddFoil] = useState(false);
   const cardsPerPage = 120;
   const { toast } = useToast();
   const router = useRouter();
@@ -215,14 +217,26 @@ export default function CardsPage() {
     if (!user || !currentCard) return;
 
     try {
-      await collectionService.addCard(user.id, currentCard.id, addQuantity, addLocation);
+      // addCopies rather than addCard, which cannot say what finish it is.
+      await collectionService.addCopies(
+        user.id,
+        currentCard.id,
+        "personal",
+        addLocation,
+        addQuantity,
+        addFoil
+      );
       toast({
         title: "Added to collection!",
-        description: `${currentCard.name} added successfully`,
+        description: `${addQuantity} ${addFoil ? "foil " : ""}${currentCard.name} added${
+          addLocation.trim() ? ` to ${addLocation.trim()}` : ""
+        }.`,
       });
       setAddToCollectionOpen(false);
       setAddQuantity(1);
       setAddLocation("");
+      // Cleared so the next card is not silently added as foil too.
+      setAddFoil(false);
     } catch (error) {
       toast({
         variant: "destructive",
@@ -629,6 +643,20 @@ export default function CardsPage() {
                   className="bg-slate-800 border-slate-700 text-white"
                 />
               </div>
+              {/* Foil is recorded per place, so foil and plain copies of the same
+                  card can sit in the same box as separate rows. */}
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={addFoil}
+                  onCheckedChange={(checked) => setAddFoil(checked === true)}
+                  aria-label="These copies are foil"
+                  className="border-slate-500 data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500"
+                />
+                <span className="flex items-center gap-1.5 text-white">
+                  <Sparkles className="h-4 w-4 text-cyan-400" />
+                  Foil
+                </span>
+              </label>
             </div>
             <DialogFooter>
               <Button
