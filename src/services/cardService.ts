@@ -88,7 +88,7 @@ export const countActiveFilters = (filters: CardFilters): number =>
 // name-collapsed catalog view. Narrow because the picker renders only art and a
 // name — plus types, which decides whether a card is a material deck card.
 const PRINTING_COLUMNS =
-  "id, name, card_number, element, card_type, class, types, rarity, cost, power, life, speed, image_url, is_restricted, set_id, sets(id, code, name, rank)" as const;
+  "id, name, card_number, element, card_type, class, types, rarity, cost, cost_memory, cost_reserve, power, life, speed, image_url, is_restricted, set_id, sets(id, code, name, rank)" as const;
 
 const CATALOG_COLUMNS =
   "id, name, set_id, card_number, element, card_type, class, rarity, cost, power, life, speed, image_url, illustrator, is_restricted, set_code, set_name, set_rank, printing_count" as const;
