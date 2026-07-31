@@ -91,6 +91,7 @@ const EMPTY_OWNERSHIP: CardOwnership = {
   sale: 0,
   loaned: 0,
   total: 0,
+  foil: 0,
   locations: [],
 };
 
