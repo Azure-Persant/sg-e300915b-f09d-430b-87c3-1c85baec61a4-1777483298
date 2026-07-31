@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
+import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 import type { Card } from "./cardService";
 
 export type CollectionBucket = "personal" | "sale" | "loaned";
@@ -341,6 +341,52 @@ export const collectionService = {
       loaned: of("loaned"),
       total: rows.reduce((t, r) => t + r.quantity, 0),
     };
+  },
+
+  /**
+   * Which printing the owner picked to represent each card name, keyed by name.
+   *
+   * A name with no entry falls back to whichever holding is listed first, which
+   * is what the whole collection did before this existed.
+   */
+  async getPreviewChoices(userId: string): Promise<Map<string, string>> {
+    const { data, error } = await supabase
+      .from("collection_previews")
+      .select("card_name, card_id")
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Error fetching preview choices:", error);
+      throw error;
+    }
+
+    return new Map((data ?? []).map((row) => [row.card_name, row.card_id]));
+  },
+
+  /** Upsert, because choosing again replaces the previous choice for that name. */
+  async setPreviewChoice(userId: string, cardName: string, cardId: string): Promise<void> {
+    const row: TablesInsert<"collection_previews"> = {
+      user_id: userId,
+      card_name: cardName,
+      card_id: cardId,
+    };
+
+    const { error } = await supabase
+      .from("collection_previews")
+      .upsert(row, { onConflict: "user_id,card_name" });
+
+    if (error) throw error;
+  },
+
+  /** Back to automatic for this name. */
+  async clearPreviewChoice(userId: string, cardName: string): Promise<void> {
+    const { error } = await supabase
+      .from("collection_previews")
+      .delete()
+      .eq("user_id", userId)
+      .eq("card_name", cardName);
+
+    if (error) throw error;
   },
 
   async bulkAddCards(
