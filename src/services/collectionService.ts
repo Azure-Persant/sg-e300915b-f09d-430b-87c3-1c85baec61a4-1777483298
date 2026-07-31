@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { Tables, TablesInsert } from "@/integrations/supabase/types";
+import type { Tables, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 import type { Card } from "./cardService";
 
 export type CollectionBucket = "personal" | "sale" | "loaned";
@@ -25,6 +25,8 @@ export interface Holding {
   location: string;
   /** Always above 0 — the row is deleted rather than zeroed. */
   quantity: number;
+  /** Whether these copies are foil. Part of what makes a place distinct. */
+  foil: boolean;
   loaned_to_user_id: string | null;
   created_at: string;
   updated_at: string;
@@ -36,6 +38,8 @@ export interface PlaceInput {
   bucket: CollectionBucket;
   location: string;
   quantity: number;
+  /** Foil copies are a separate place from non-foil ones in the same box. */
+  foil: boolean;
   loanedToUserId?: string | null;
 }
 
@@ -45,6 +49,8 @@ export interface CardOwnership {
   sale: number;
   loaned: number;
   total: number;
+  /** Of the total, how many are foil. Foils are playable, so they count as held. */
+  foil: number;
   /** Distinct place names holding this card, owner-only information. */
   locations: string[];
 }
@@ -58,12 +64,15 @@ export interface CollectionStats {
   forSaleCards: number;
   loanedQuantity: number;
   loanedCards: number;
+  /** Foil copies held, and how many distinct cards they cover. */
+  foilQuantity: number;
+  foilCards: number;
   /** Distinct place names in use, for the location suggestions. */
   locations: string[];
 }
 
 const HOLDING_COLUMNS =
-  "id, user_id, card_id, bucket, location, quantity, loaned_to_user_id, created_at, updated_at";
+  "id, user_id, card_id, bucket, location, quantity, foil, loaned_to_user_id, created_at, updated_at";
 
 /** Blank locations are stored as "", never null, so the unique index can use them. */
 const normaliseLocation = (location: string | null | undefined): string =>
@@ -99,7 +108,7 @@ export const collectionService = {
   async getCollectionStats(userId: string): Promise<CollectionStats> {
     const { data, error } = await supabase
       .from("user_collections")
-      .select("card_id, bucket, location, quantity")
+      .select("card_id, bucket, location, quantity, foil")
       .eq("user_id", userId);
 
     if (error) {
@@ -121,6 +130,8 @@ export const collectionService = {
       forSaleCards: cards("sale"),
       loanedQuantity: sum("loaned"),
       loanedCards: cards("loaned"),
+      foilQuantity: rows.filter((r) => r.foil).reduce((total, r) => total + r.quantity, 0),
+      foilCards: new Set(rows.filter((r) => r.foil).map((r) => r.card_id)).size,
       locations: Array.from(
         new Set(rows.map((r) => r.location).filter((l) => l !== ""))
       ).sort((a, b) => a.localeCompare(b)),
@@ -148,7 +159,7 @@ export const collectionService = {
     // Two places with the same name in the same bucket are one place.
     const merged = new Map<string, PlaceInput>();
     for (const place of wanted) {
-      const key = `${place.bucket}|${place.location}`;
+      const key = `${place.bucket}|${place.location}|${place.foil}`;
       const existing = merged.get(key);
       merged.set(
         key,
@@ -158,7 +169,7 @@ export const collectionService = {
 
     const { data: current, error: readError } = await supabase
       .from("user_collections")
-      .select("id, bucket, location")
+      .select("id, bucket, location, foil")
       .eq("user_id", userId)
       .eq("card_id", cardId);
 
@@ -172,17 +183,18 @@ export const collectionService = {
           bucket: place.bucket,
           location: place.location,
           quantity: place.quantity,
+          foil: place.foil,
           loaned_to_user_id: place.loanedToUserId ?? null,
           updated_at: new Date().toISOString(),
         })),
-        { onConflict: "user_id,card_id,bucket,location" }
+        { onConflict: "user_id,card_id,bucket,location,foil" }
       );
 
       if (writeError) throw writeError;
     }
 
     const staleIds = (current ?? [])
-      .filter((row) => !merged.has(`${row.bucket}|${row.location}`))
+      .filter((row) => !merged.has(`${row.bucket}|${row.location}|${row.foil}`))
       .map((row) => row.id);
 
     if (staleIds.length > 0) {
@@ -206,7 +218,8 @@ export const collectionService = {
     cardId: string,
     bucket: CollectionBucket,
     location: string,
-    quantity: number
+    quantity: number,
+    foil = false
   ): Promise<void> {
     if (quantity <= 0) return;
     const place = normaliseLocation(location);
@@ -222,6 +235,7 @@ export const collectionService = {
       .eq("card_id", cardId)
       .eq("bucket", bucket)
       .eq("location", place)
+      .eq("foil", foil)
       .maybeSingle();
 
     if (readError) throw readError;
@@ -232,10 +246,11 @@ export const collectionService = {
         card_id: cardId,
         bucket,
         location: place,
+        foil,
         quantity: (existing?.quantity ?? 0) + quantity,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "user_id,card_id,bucket,location" }
+      { onConflict: "user_id,card_id,bucket,location,foil" }
     );
 
     if (error) {
@@ -284,7 +299,7 @@ export const collectionService = {
   async getOwnershipMap(userId: string): Promise<Map<string, CardOwnership>> {
     const { data, error } = await supabase
       .from("user_collections")
-      .select("card_id, bucket, location, quantity")
+      .select("card_id, bucket, location, quantity, foil")
       .eq("user_id", userId);
 
     if (error) {
@@ -298,10 +313,11 @@ export const collectionService = {
       const bucket = row.bucket as CollectionBucket;
       const current =
         map.get(row.card_id) ??
-        ({ personal: 0, sale: 0, loaned: 0, total: 0, locations: [] } as CardOwnership);
+        ({ personal: 0, sale: 0, loaned: 0, total: 0, foil: 0, locations: [] } as CardOwnership);
 
       current[bucket] += row.quantity;
       current.total += row.quantity;
+      if (row.foil) current.foil += row.quantity;
 
       const place = normaliseLocation(row.location);
       if (place && !current.locations.includes(place)) current.locations.push(place);
@@ -341,6 +357,108 @@ export const collectionService = {
       loaned: of("loaned"),
       total: rows.reduce((t, r) => t + r.quantity, 0),
     };
+  },
+
+  /**
+   * Move whole holdings to another location.
+   *
+   * Merging is the whole difficulty. The destination may already hold the same
+   * card in the same bucket with the same finish, and the place key forbids a
+   * second row for it — so those two have to become one row with the copies added
+   * together, and the moved row deleted. An update alone would collide.
+   *
+   * Loans are left where they are: their location names the person holding the
+   * cards, so "move everything to Box 3" must not claim a lent-out card is in a
+   * box. Returns what it did so the caller can say so.
+   */
+  async moveHoldings(
+    holdingIds: string[],
+    toLocation: string
+  ): Promise<{ moved: number; merged: number; skippedLoans: number }> {
+    if (holdingIds.length === 0) return { moved: 0, merged: 0, skippedLoans: 0 };
+    const place = normaliseLocation(toLocation);
+
+    const { data, error } = await supabase
+      .from("user_collections")
+      .select("id, user_id, card_id, bucket, location, quantity, foil")
+      .in("id", holdingIds);
+
+    if (error) throw error;
+
+    const rows = data ?? [];
+    const movable = rows.filter((row) => row.bucket !== "loaned" && row.location !== place);
+    const skippedLoans = rows.filter((row) => row.bucket === "loaned").length;
+
+    if (movable.length === 0) {
+      return { moved: 0, merged: 0, skippedLoans };
+    }
+
+    // What already sits at the destination for those cards, so the merge knows
+    // what it is adding to.
+    const { data: atTarget, error: targetError } = await supabase
+      .from("user_collections")
+      .select("id, card_id, bucket, quantity, foil")
+      .eq("user_id", movable[0].user_id)
+      .eq("location", place)
+      .in("card_id", [...new Set(movable.map((row) => row.card_id))]);
+
+    if (targetError) throw targetError;
+
+    const keyOf = (row: { card_id: string; bucket: string; foil: boolean }) =>
+      `${row.card_id}|${row.bucket}|${row.foil}`;
+
+    const existing = new Map((atTarget ?? []).map((row) => [keyOf(row), row]));
+    let moved = 0;
+    let merged = 0;
+
+    for (const row of movable) {
+      const target = existing.get(keyOf(row));
+
+      if (target) {
+        // Add into the destination row, then drop the one we moved from.
+        const grow: TablesUpdate<"user_collections"> = {
+          quantity: target.quantity + row.quantity,
+          updated_at: new Date().toISOString(),
+        };
+        const { error: growError } = await supabase
+          .from("user_collections")
+          .update(grow)
+          .eq("id", target.id);
+        if (growError) throw growError;
+
+        const { error: dropError } = await supabase
+          .from("user_collections")
+          .delete()
+          .eq("id", row.id);
+        if (dropError) throw dropError;
+
+        target.quantity += row.quantity;
+        merged += 1;
+      } else {
+        const relocate: TablesUpdate<"user_collections"> = {
+          location: place,
+          updated_at: new Date().toISOString(),
+        };
+        const { error: moveError } = await supabase
+          .from("user_collections")
+          .update(relocate)
+          .eq("id", row.id);
+        if (moveError) throw moveError;
+
+        // Later rows in this batch may now need to merge into this one.
+        existing.set(keyOf(row), {
+          id: row.id,
+          card_id: row.card_id,
+          bucket: row.bucket,
+          quantity: row.quantity,
+          foil: row.foil,
+        });
+      }
+
+      moved += 1;
+    }
+
+    return { moved, merged, skippedLoans };
   },
 
   /**
