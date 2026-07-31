@@ -412,6 +412,7 @@ export type Database = {
           bucket: string
           card_id: string
           created_at: string
+          foil: boolean
           id: string
           loaned_to_user_id: string | null
           location: string
@@ -423,6 +424,7 @@ export type Database = {
           bucket: string
           card_id: string
           created_at?: string
+          foil?: boolean
           id?: string
           loaned_to_user_id?: string | null
           location?: string
@@ -434,6 +436,7 @@ export type Database = {
           bucket?: string
           card_id?: string
           created_at?: string
+          foil?: boolean
           id?: string
           loaned_to_user_id?: string | null
           location?: string
