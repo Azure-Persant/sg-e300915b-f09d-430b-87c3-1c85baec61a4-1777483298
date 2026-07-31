@@ -322,19 +322,37 @@ export default function CollectionPage() {
     }
   };
 
+  /**
+   * Open the editor for a card, covering every place it sits in — both finishes,
+   * not just the tile that was clicked.
+   *
+   * This has to be the whole card. Saving calls setCardHoldings, which replaces
+   * every place for a printing with exactly what the dialog submits, so a dialog
+   * showing only the foil places would have deleted the plain ones on save. The
+   * same applies to the trash icon, which removes a printing outright. The finish
+   * is editable per row instead, which is where it belongs.
+   */
   const handleEditCard = (groupedCard: GroupedCard) => {
     setSelectedGroupedCard(groupedCard);
-    setEditCardIds(
-      groupedCard.printings.map((p) => ({ cardId: p.item.card_id, setCode: p.setCode }))
-    );
+
+    const held = collection.filter((item) => item.card?.name === groupedCard.cardName);
+
+    const setCodeOf = (item: Holding) =>
+      (item.card && sets.get(item.card.set_id)?.code) || "???";
+
+    // One block per printing, however many places it has.
+    const printings = new Map<string, string>();
+    for (const item of held) printings.set(item.card_id, setCodeOf(item));
+
+    setEditCardIds([...printings].map(([cardId, setCode]) => ({ cardId, setCode })));
     setEditPlaces(
-      groupedCard.printings.map((p) => ({
-        cardId: p.item.card_id,
-        setCode: p.setCode,
-        bucket: p.item.bucket,
-        location: p.item.location,
-        quantity: p.item.quantity,
-        foil: p.item.foil,
+      held.map((item) => ({
+        cardId: item.card_id,
+        setCode: setCodeOf(item),
+        bucket: item.bucket,
+        location: item.location,
+        quantity: item.quantity,
+        foil: item.foil,
       }))
     );
     setEditDialogOpen(true);
