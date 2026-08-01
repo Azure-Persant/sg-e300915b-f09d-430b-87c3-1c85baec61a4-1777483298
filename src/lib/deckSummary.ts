@@ -1,5 +1,6 @@
 import { checkDeck, sectionCounts, type DeckProblem, type RuleCard, type SectionCount } from "@/lib/deckRules";
 import { referencesToken } from "@/lib/deckImport";
+import { sortByElementThenName, sortRows } from "@/lib/deckOrder";
 import type { CardOwnership } from "@/services/collectionService";
 import type { ArtOption, DeckCardWithCard } from "@/services/deckService";
 
@@ -106,18 +107,21 @@ export function deckTokens(rows: DeckCardWithCard[], tokenCards: ArtOption[]): A
     if (referencesToken(effectText, token.name)) byName.set(token.name, token);
   }
 
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  // Same element order as the deck sections, so the tokens read as part of the
+  // same list rather than a separate alphabet.
+  return sortByElementThenName([...byName.values()]);
 }
 
-/** Rows split into the three lists, each sorted by name. */
+/**
+ * Rows split into the three lists, each in display order: the material deck by
+ * champion level then element, the others by element then name. See deckOrder.
+ */
 export function groupSections(rows: DeckCardWithCard[]) {
   return (["material", "main", "sideboard"] as const).map((section) => {
-    const inSection = rows
-      .filter((row) => row.section === section)
-      .sort(
-        (a, b) =>
-          a.cards.name.localeCompare(b.cards.name) || Number(a.foil) - Number(b.foil)
-      );
+    const inSection = sortRows(
+      rows.filter((row) => row.section === section),
+      section
+    );
     return {
       section,
       rows: inSection,
