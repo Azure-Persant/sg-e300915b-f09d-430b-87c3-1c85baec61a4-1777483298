@@ -265,7 +265,7 @@ export default function DecksPage() {
                           alt={deck.cover.name}
                           variant="banner"
                           quality={90}
-                          className="absolute left-[-6%] top-0 h-full w-[112%] object-cover object-[center_30%] transition-transform duration-300 group-hover:scale-[1.03]"
+                          className="absolute left-[-6%] top-0 h-full w-[112%] max-w-none object-cover object-[center_30%] transition-transform duration-300 group-hover:scale-[1.03]"
                         />
                       ) : (
                         <span className="absolute inset-0 flex items-center justify-center">
