@@ -24,6 +24,18 @@ const VARIANTS = {
   },
   /** The large image in a card dialog. */
   detail: { width: 380, sizes: "(max-width: 768px) 90vw, 380px" },
+  /**
+   * The deck list's cover banner. Much larger than a tile despite looking
+   * similar in size: the banner crops the card down to its artwork and then
+   * stretches that band to the full width, so the source has to be wide enough
+   * for the part that survives the crop. Using `tile` here asked the browser for
+   * roughly 16vw and got a 256px image stretched across 425 CSS px, doubled
+   * again on a retina screen, which is what made it look pixelated.
+   */
+  banner: {
+    width: 720,
+    sizes: "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 34vw",
+  },
   /** Row thumbnail in a list. */
   thumb: { width: 64, sizes: "64px" },
   /** Slightly larger row thumbnail. */
@@ -40,9 +52,14 @@ type Props = {
    * lazy-loaded and do not pop in. Leave off for grid tiles.
    */
   priority?: boolean;
+  /**
+   * Overrides next/image's default of 75. Worth raising only where a crop
+   * enlarges part of the image, since compression artefacts enlarge with it.
+   */
+  quality?: number;
 };
 
-export function CardImage({ src, alt, variant = "tile", className, priority }: Props) {
+export function CardImage({ src, alt, variant = "tile", className, priority, quality }: Props) {
   if (!src) return null;
 
   const { width, sizes } = VARIANTS[variant];
@@ -55,6 +72,7 @@ export function CardImage({ src, alt, variant = "tile", className, priority }: P
       height={Math.round(width * CARD_ASPECT)}
       sizes={sizes}
       priority={priority}
+      quality={quality}
       className={className}
     />
   );
