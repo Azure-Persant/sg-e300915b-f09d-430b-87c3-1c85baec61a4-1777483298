@@ -53,6 +53,53 @@ export interface ArtGroup {
   options: ArtOption[];
 }
 
+/** A deck as the Showcase lists it. */
+export interface ShowcaseDeck {
+  id: string;
+  name: string;
+  description: string | null;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+  owner_name: string;
+  cover_image_url: string | null;
+  cover_name: string | null;
+  card_count: number;
+  /** Elements the deck plays, Norm excluded — it separates nothing. */
+  elements: string[];
+  champions: string[];
+  top_champion: string | null;
+}
+
+export type DeckShare = Tables<"deck_shares">;
+
+/** A deck opened by link: no ids to act on, just what the page renders. */
+export interface SharedDeckMeta {
+  deck_id: string;
+  name: string;
+  description: string | null;
+  owner_name: string;
+  label: string | null;
+  expires_at: string | null;
+}
+
+export interface SharedDeckCard {
+  card_id: string;
+  section: string;
+  quantity: number;
+  foil: boolean;
+  name: string;
+  element: string | null;
+  types: string[];
+  cost_memory: number | null;
+  cost_reserve: number | null;
+  is_restricted: boolean | null;
+  image_url: string | null;
+  effect_text: string | null;
+  set_code: string | null;
+  set_name: string | null;
+}
+
 export interface ImportResult {
   /** Distinct printings written. */
   matched: number;
@@ -308,6 +355,142 @@ export const deckService = {
 
     if (error) throw error;
     await this.touch(deckId);
+  },
+
+  /**
+   * Public decks, newest first, optionally narrowed by champion and element.
+   *
+   * Element matching is "any of", so picking Fire and Wind finds decks playing
+   * either. Both filters run in Postgres against the arrays the view already
+   * aggregates, so the page never downloads decks it is about to discard.
+   */
+  async getShowcase(options: {
+    champion?: string | null;
+    elements?: string[];
+    search?: string;
+    limit?: number;
+  } = {}): Promise<ShowcaseDeck[]> {
+    let query = supabase
+      .from("deck_showcase")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(options.limit ?? 60);
+
+    if (options.champion) query = query.contains("champions", [options.champion]);
+    if (options.elements?.length) query = query.overlaps("elements", options.elements);
+    if (options.search?.trim()) query = query.ilike("name", `%${options.search.trim()}%`);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as unknown as ShowcaseDeck[];
+  },
+
+  /** Champions and elements actually present on public decks, for the filters. */
+  async getShowcaseFilters(): Promise<{ champions: string[]; elements: string[] }> {
+    const { data, error } = await supabase.from("deck_showcase").select("champions, elements");
+    if (error) throw error;
+
+    const champions = new Set<string>();
+    const elements = new Set<string>();
+    for (const row of data ?? []) {
+      for (const champion of row.champions ?? []) champions.add(champion);
+      for (const element of row.elements ?? []) elements.add(element);
+    }
+
+    return {
+      champions: [...champions].sort((a, b) => a.localeCompare(b)),
+      elements: [...elements],
+    };
+  },
+
+  /** Listed on the Showcase, or not. */
+  async setDeckPublic(deckId: string, isPublic: boolean): Promise<void> {
+    const payload: TablesUpdate<"decks"> = { is_public: isPublic };
+    const { error } = await supabase.from("decks").update(payload).eq("id", deckId);
+    if (error) throw error;
+  },
+
+  async listShares(deckId: string): Promise<DeckShare[]> {
+    const { data, error } = await supabase
+      .from("deck_shares")
+      .select("*")
+      .eq("deck_id", deckId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async createShare(
+    deckId: string,
+    input: { label?: string; email?: string; expiresAt: string | null }
+  ): Promise<DeckShare> {
+    const email = input.email?.trim().toLowerCase() || null;
+    const row: TablesInsert<"deck_shares"> = {
+      deck_id: deckId,
+      label: input.label?.trim() || null,
+      invited_email: email,
+      expires_at: input.expiresAt,
+    };
+
+    // Re-inviting an address updates that person's link rather than stacking a
+    // second one, which is what the unique key on (deck, email) expects.
+    const { data, error } = email
+      ? await supabase
+          .from("deck_shares")
+          .upsert(row, { onConflict: "deck_id,invited_email" })
+          .select()
+          .single()
+      : await supabase.from("deck_shares").insert(row).select().single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /** Keeps the row, so the owner can see the link existed and was stopped. */
+  async revokeShare(shareId: string): Promise<void> {
+    const payload: TablesUpdate<"deck_shares"> = { revoked_at: new Date().toISOString() };
+    const { error } = await supabase.from("deck_shares").update(payload).eq("id", shareId);
+    if (error) throw error;
+  },
+
+  async removeShare(shareId: string): Promise<void> {
+    const { error } = await supabase.from("deck_shares").delete().eq("id", shareId);
+    if (error) throw error;
+  },
+
+  /** A deck opened by token. Null covers unknown, expired, revoked and not-yours. */
+  async readShared(
+    token: string
+  ): Promise<{ meta: SharedDeckMeta; cards: SharedDeckCard[] } | null> {
+    const [metaResult, cardsResult] = await Promise.all([
+      supabase.rpc("shared_deck_meta", { p_token: token }),
+      supabase.rpc("shared_deck_cards", { p_token: token }),
+    ]);
+
+    if (metaResult.error) throw metaResult.error;
+    if (cardsResult.error) throw cardsResult.error;
+
+    const meta = (metaResult.data ?? [])[0];
+    if (!meta) return null;
+
+    return { meta: meta as SharedDeckMeta, cards: (cardsResult.data ?? []) as SharedDeckCard[] };
+  },
+
+  /**
+   * Copy a deck into the signed-in account, and return the new deck's id.
+   *
+   * The permission check is in the database, not here, because the source may be
+   * a deck this account can only reach through a token.
+   */
+  async duplicate(deckId: string, token?: string | null): Promise<string> {
+    const { data, error } = await supabase.rpc("duplicate_deck", {
+      p_deck_id: deckId,
+      p_token: token ?? null,
+    });
+
+    if (error) throw error;
+    return data as string;
   },
 
   /**
