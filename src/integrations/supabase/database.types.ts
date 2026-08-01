@@ -266,6 +266,47 @@ export type Database = {
           },
         ]
       }
+      deck_shares: {
+        Row: {
+          created_at: string
+          deck_id: string
+          expires_at: string | null
+          id: string
+          invited_email: string | null
+          label: string | null
+          revoked_at: string | null
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          deck_id: string
+          expires_at?: string | null
+          id?: string
+          invited_email?: string | null
+          label?: string | null
+          revoked_at?: string | null
+          token?: string
+        }
+        Update: {
+          created_at?: string
+          deck_id?: string
+          expires_at?: string | null
+          id?: string
+          invited_email?: string | null
+          label?: string | null
+          revoked_at?: string | null
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deck_shares_deck_id_fkey"
+            columns: ["deck_id"]
+            isOneToOne: false
+            referencedRelation: "decks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       decks: {
         Row: {
           cover_card_id: string | null
@@ -459,6 +500,24 @@ export type Database = {
       }
     }
     Views: {
+      deck_showcase: {
+        Row: {
+          card_count: number | null
+          champions: string[] | null
+          cover_image_url: string | null
+          cover_name: string | null
+          created_at: string | null
+          description: string | null
+          elements: string[] | null
+          id: string | null
+          name: string | null
+          owner_name: string | null
+          top_champion: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
       card_filter_options: {
         Row: {
           card_count: number | null
@@ -531,6 +590,44 @@ export type Database = {
           personal_quantity: number
           sale_quantity: number
           loaned_quantity: number
+        }[]
+      }
+      display_name_of: {
+        Args: { p_user: string }
+        Returns: string
+      }
+      duplicate_deck: {
+        Args: { p_deck_id: string; p_token?: string | null }
+        Returns: string
+      }
+      shared_deck_meta: {
+        Args: { p_token: string }
+        Returns: {
+          deck_id: string
+          name: string
+          description: string | null
+          owner_name: string
+          label: string | null
+          expires_at: string | null
+        }[]
+      }
+      shared_deck_cards: {
+        Args: { p_token: string }
+        Returns: {
+          card_id: string
+          section: string
+          quantity: number
+          foil: boolean
+          name: string
+          element: string | null
+          types: string[]
+          cost_memory: number | null
+          cost_reserve: number | null
+          is_restricted: boolean | null
+          image_url: string | null
+          effect_text: string | null
+          set_code: string | null
+          set_name: string | null
         }[]
       }
       shared_collection_meta: {
