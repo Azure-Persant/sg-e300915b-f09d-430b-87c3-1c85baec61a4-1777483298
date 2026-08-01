@@ -24,9 +24,9 @@ import {
   type DeckWithCards,
 } from "@/services/deckService";
 
-/** Twelve across on a wide desktop, matching the editor's grid. */
+/** Eight across on a wide desktop, matching the editor's grid. */
 const DECK_GRID =
-  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-9 2xl:grid-cols-12";
+  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-8";
 
 /**
  * A deck, read-only.
@@ -313,22 +313,24 @@ function ViewCard({
         )}
       </div>
 
-      <div className="flex items-center justify-center gap-1 px-1 py-1 text-[10px] leading-tight">
-        {row.foil && (
-          <Badge className="gap-0.5 bg-cyan-500/20 px-1 py-0 text-[10px] text-cyan-200">
-            <Sparkles className="h-2.5 w-2.5" />
-            Foil
-          </Badge>
-        )}
-        {card.is_restricted && (
-          <Badge className="bg-amber-500/20 px-1 py-0 text-[10px] text-amber-300">
-            Restricted
-          </Badge>
-        )}
-        {!row.foil && !card.is_restricted && (
-          <span className="truncate text-slate-500" title={card.name}>
-            {card.name}
-          </span>
+      <div className="px-1 py-1">
+        <p className="truncate text-center text-xs font-medium text-white" title={card.name}>
+          {card.name}
+        </p>
+        {(row.foil || card.is_restricted) && (
+          <div className="mt-0.5 flex items-center justify-center gap-1">
+            {row.foil && (
+              <Badge className="gap-0.5 bg-cyan-500/20 px-1 py-0 text-[10px] text-cyan-200">
+                <Sparkles className="h-2.5 w-2.5" />
+                Foil
+              </Badge>
+            )}
+            {card.is_restricted && (
+              <Badge className="bg-amber-500/20 px-1 py-0 text-[10px] text-amber-300">
+                Restricted
+              </Badge>
+            )}
+          </div>
         )}
       </div>
     </div>
