@@ -682,6 +682,7 @@ export default function CollectionPage() {
                         locations that used to sit beside it are reached through
                         Edit, which is where they are acted on anyway. */}
                     <CardContent className="p-2">
+                      <div className="relative">
                       <button
                         type="button"
                         onClick={() => handleCardClick(group.representativeCard)}
@@ -742,33 +743,33 @@ export default function CollectionPage() {
                         </div>
 
                         {group.representativeCard.is_restricted && (
-                          <span className="absolute right-1 top-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                          <span className="absolute bottom-1 left-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                             Restricted
                           </span>
                         )}
                       </button>
 
-                      <div className="mt-2 flex items-center gap-1.5">
-                        {/* Selecting a tile selects every place its copies sit
-                            in, which is what the bulk move acts on. Its own
-                            control rather than part of the art button, so
-                            clicking the card still opens it. */}
-                        <label
-                          className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-slate-600 hover:bg-slate-700"
-                          title={`Select ${group.cardName} for a bulk move`}
-                        >
-                          <Checkbox
-                            checked={picked}
-                            onCheckedChange={() => toggleSelected(group.key)}
-                            aria-label={`Select ${group.cardName}${group.foil ? " (foil)" : ""}`}
-                            className="border-slate-500 data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500"
-                          />
-                        </label>
+                      {/* Top right of the art, not in the row below: three
+                          controls in a tile this narrow wrapped "Total: 2" onto
+                          a second line and pushed the row out of shape. */}
+                      <label
+                        className="absolute right-1 top-1 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-slate-500 bg-slate-950/80 hover:border-cyan-400"
+                        title={`Select ${group.cardName} for a bulk move`}
+                      >
+                        <Checkbox
+                          checked={picked}
+                          onCheckedChange={() => toggleSelected(group.key)}
+                          aria-label={`Select ${group.cardName}${group.foil ? " (foil)" : ""}`}
+                          className="h-3.5 w-3.5 border-slate-400 data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500"
+                        />
+                      </label>
+                      </div>
 
+                      <div className="mt-2 flex items-center gap-1.5">
                         {/* Reports a count rather than doing anything, so it is
                             not a button — but it is sized to the sm button
                             variant (h-8, text-xs) so it reads as Edit's sibling. */}
-                        <span className="inline-flex h-8 flex-1 items-center justify-center rounded-md border border-cyan-500 px-2 text-xs font-medium text-cyan-400">
+                        <span className="inline-flex h-8 flex-1 items-center justify-center whitespace-nowrap rounded-md border border-cyan-500 px-2 text-xs font-medium text-cyan-400">
                           Total: {group.totalQuantity}
                         </span>
                         <Button
@@ -776,7 +777,7 @@ export default function CollectionPage() {
                           variant="outline"
                           onClick={() => handleEditCard(group)}
                           aria-label={`Edit ${group.cardName}${group.foil ? " (foil)" : ""}`}
-                          className="flex-1 border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
+                          className="flex-1 whitespace-nowrap border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
                         >
                           <Pencil className="mr-1 h-3 w-3" />
                           Edit
