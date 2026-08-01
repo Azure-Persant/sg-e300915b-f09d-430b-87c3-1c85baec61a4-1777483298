@@ -243,37 +243,47 @@ export default function DecksPage() {
                 >
                   {/* The chosen card's art, cropped to the illustration.
 
-                      A card image is 2.5 x 3.5 inches of which the artwork
-                      occupies roughly the band from 13% to 67% of the height —
-                      below the level and name bar, above the text box. Pinning
-                      the crop to the top showed the name bar and a sliver of
-                      art instead; 28% down a 4:3 window lands on that band.
-                      Both numbers are geometry, so they hold at any tile
-                      width. */}
-                  <div className="relative aspect-[4/3] overflow-hidden bg-slate-900">
-                    {deck.cover?.image_url ? (
-                      <CardImage
-                        src={deck.cover.image_url}
-                        alt={deck.cover.name}
-                        variant="tile"
-                        className="h-full w-full object-cover object-[center_28%]"
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center">
-                        <Layers className="h-10 w-10 text-slate-700" />
-                      </div>
-                    )}
+                      16:9, and the image is laid out 12% wider than the tile and
+                      pulled left by 6%, so the card's black border is outside the
+                      frame on both sides. object-cover then crops vertically, and
+                      30% down lands on the artwork band — a card is 2.5 x 3.5 with
+                      the art roughly between 13% and 67% of its height. All of it
+                      is geometry, so it holds at any tile width.
 
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent p-3 pt-8">
-                      <h2 className="line-clamp-1 text-lg font-bold text-white">
-                        {deck.name}
-                      </h2>
-                      {deck.cover && (
-                        <p className="line-clamp-1 text-xs text-slate-400">
-                          Art: {deck.cover.name}
-                        </p>
+                      The link wraps the art rather than the whole tile, and the
+                      art-picker button is its sibling rather than nested inside —
+                      a button inside an anchor is invalid and swallows clicks. */}
+                  <div className="relative aspect-video overflow-hidden bg-slate-900">
+                    <Link
+                      href={`/decks/${deck.id}`}
+                      aria-label={`Open ${deck.name}`}
+                      className="group absolute inset-0 block focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400"
+                    >
+                      {deck.cover?.image_url ? (
+                        <CardImage
+                          src={deck.cover.image_url}
+                          alt={deck.cover.name}
+                          variant="banner"
+                          quality={90}
+                          className="absolute left-[-6%] top-0 h-full w-[112%] object-cover object-[center_30%] transition-transform duration-300 group-hover:scale-[1.03]"
+                        />
+                      ) : (
+                        <span className="absolute inset-0 flex items-center justify-center">
+                          <Layers className="h-10 w-10 text-slate-700" />
+                        </span>
                       )}
-                    </div>
+
+                      <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent p-3 pt-8">
+                        <span className="block truncate text-lg font-bold text-white">
+                          {deck.name}
+                        </span>
+                        {deck.cover && (
+                          <span className="block truncate text-xs text-slate-400">
+                            Art: {deck.cover.name}
+                          </span>
+                        )}
+                      </span>
+                    </Link>
 
                     <DeckArtPicker
                       deckId={deck.id}
@@ -284,7 +294,7 @@ export default function DecksPage() {
                         size="icon"
                         variant="secondary"
                         title="Choose deck art"
-                        className="absolute right-2 top-2 h-8 w-8 bg-slate-900/80 text-slate-200 hover:bg-slate-900 hover:text-white"
+                        className="absolute right-2 top-2 z-10 h-8 w-8 bg-slate-900/80 text-slate-200 hover:bg-slate-900 hover:text-white"
                       >
                         <ImageIcon className="h-4 w-4" />
                       </Button>
@@ -307,7 +317,7 @@ export default function DecksPage() {
 
                     <div className="flex gap-2">
                       <Button asChild className="flex-1 bg-cyan-600 text-white hover:bg-cyan-700">
-                        <Link href={`/decks/${deck.id}`}>
+                        <Link href={`/decks/${deck.id}/edit`}>
                           <Pencil className="mr-2 h-4 w-4" />
                           Edit
                         </Link>
