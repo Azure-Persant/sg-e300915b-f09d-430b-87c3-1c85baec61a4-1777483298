@@ -40,6 +40,8 @@ export interface ArtOption {
   name: string;
   image_url: string;
   card_number: string;
+  /** Used to order tokens by element, the same as any other card. */
+  element: string | null;
   set_code: string | null;
   set_name: string | null;
 }
@@ -570,7 +572,7 @@ export const deckService = {
     for (const group of chunk(names, 40)) {
       const { data, error } = await supabase
         .from("cards")
-        .select("id, name, card_number, image_url, sets(code, name)")
+        .select("id, name, card_number, image_url, element, sets(code, name)")
         .in("name", group)
         .not("image_url", "is", null)
         .order("name");
@@ -589,7 +591,7 @@ export const deckService = {
   async tokenPrintings(): Promise<ArtOption[]> {
     const { data, error } = await supabase
       .from("cards")
-      .select("id, name, card_number, image_url, sets(code, name)")
+      .select("id, name, card_number, image_url, element, sets(code, name)")
       .contains("types", ["TOKEN"])
       .not("image_url", "is", null)
       .order("name");
@@ -656,6 +658,7 @@ function toArtOptions(
         name: string;
         card_number: string;
         image_url: string | null;
+        element: string | null;
         sets: { code: string; name: string } | null;
       }>
     | null
@@ -667,6 +670,7 @@ function toArtOptions(
       name: row.name,
       image_url: row.image_url as string,
       card_number: row.card_number,
+      element: row.element,
       set_code: row.sets?.code ?? null,
       set_name: row.sets?.name ?? null,
     }));
