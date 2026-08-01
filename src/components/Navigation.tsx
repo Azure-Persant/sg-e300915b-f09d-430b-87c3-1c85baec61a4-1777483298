@@ -46,6 +46,9 @@ export function Navigation() {
             <Button variant="ghost" className={navLink} asChild>
               <Link href="/cards">Browse Cards</Link>
             </Button>
+            <Button variant="ghost" className={navLink} asChild>
+              <Link href="/decks/showcase">Deck Showcase</Link>
+            </Button>
             {user && (
               <>
                 <Button variant="ghost" className={navLink} asChild>
@@ -130,6 +133,11 @@ export function Navigation() {
             <Button variant="ghost" className={`justify-start ${navLink}`} asChild>
               <Link href="/cards" onClick={() => setMobileMenuOpen(false)}>
                 Browse Cards
+              </Link>
+            </Button>
+            <Button variant="ghost" className={`justify-start ${navLink}`} asChild>
+              <Link href="/decks/showcase" onClick={() => setMobileMenuOpen(false)}>
+                Deck Showcase
               </Link>
             </Button>
             {user ? (
