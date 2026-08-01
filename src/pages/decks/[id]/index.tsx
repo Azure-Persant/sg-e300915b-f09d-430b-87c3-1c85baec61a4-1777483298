@@ -1,13 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { AlertTriangle, ArrowLeft, FileDown, Loader2, Pencil, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Copy,
+  FileDown,
+  Globe,
+  Loader2,
+  Lock,
+  Pencil,
+  Share2,
+  Sparkles,
+} from "lucide-react";
 
 import { SEO } from "@/components/SEO";
 import { Navigation } from "@/components/Navigation";
 import { CardImage } from "@/components/CardImage";
 import { DeckExportDialog } from "@/components/DeckListTransfer";
 import { DeckSummaryBar } from "@/components/DeckSummaryBar";
+import { DeckVisibility } from "@/components/DeckVisibility";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -46,34 +66,43 @@ export default function DeckViewPage() {
   const [ownership, setOwnership] = useState<Map<string, CardOwnership>>(new Map());
   const [tokenCards, setTokenCards] = useState<ArtOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [duplicating, setDuplicating] = useState(false);
+
+  const reload = async () => {
+    if (!id || typeof id !== "string") return;
+    try {
+      setDeck(await deckService.getDeckById(id));
+    } catch {
+      setDeck(null);
+    }
+  };
 
   useEffect(() => {
-    if (!authLoading && !user) router.push("/auth/login");
-  }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (!user || !id || typeof id !== "string") return;
+    if (!id || typeof id !== "string" || authLoading) return;
     let active = true;
 
     (async () => {
+      setLoading(true);
       try {
-        const [deckData, ownershipMap, tokens] = await Promise.all([
+        // The deck and the tokens are readable signed out for a public deck; only
+        // the missing-cards figures need an account, so they are fetched
+        // separately rather than making the whole page require one.
+        const [deckData, tokens] = await Promise.all([
           deckService.getDeckById(id),
-          collectionService.getOwnershipMap(user.id),
           deckService.tokenPrintings(),
         ]);
         if (!active) return;
         setDeck(deckData);
-        setOwnership(ownershipMap);
         setTokenCards(tokens);
-      } catch (error) {
-        if (active) {
-          toast({
-            title: "Could not load that deck",
-            description: error instanceof Error ? error.message : "Please try again.",
-            variant: "destructive",
-          });
+
+        if (user) {
+          const ownershipMap = await collectionService.getOwnershipMap(user.id);
+          if (active) setOwnership(ownershipMap);
         }
+      } catch {
+        // A deck that is private, deleted, or never existed all look the same
+        // from here, which is deliberate.
+        if (active) setDeck(null);
       } finally {
         if (active) setLoading(false);
       }
@@ -82,7 +111,30 @@ export default function DeckViewPage() {
     return () => {
       active = false;
     };
-  }, [user, id, toast]);
+  }, [user, id, authLoading]);
+
+  const isOwner = !!user && !!deck && deck.user_id === user.id;
+
+  const handleDuplicate = async () => {
+    if (!deck) return;
+    setDuplicating(true);
+    try {
+      const newId = await deckService.duplicate(deck.id);
+      toast({
+        title: "Copied to your decks",
+        description: `"${deck.name}" is now in My Decks as a private deck.`,
+      });
+      router.push(`/decks/${newId}/edit`);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Could not copy that deck",
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    } finally {
+      setDuplicating(false);
+    }
+  };
 
   const summary = useMemo(
     () => summariseDeck(deck?.deck_cards ?? [], ownership),
@@ -103,12 +155,41 @@ export default function DeckViewPage() {
     [deck]
   );
 
-  if (authLoading || loading || !user || !deck) {
+  if (authLoading || loading) {
     return (
       <>
         <Navigation />
         <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
           <Loader2 className="h-8 w-8 animate-spin text-cyan-500" />
+        </div>
+      </>
+    );
+  }
+
+  if (!deck) {
+    return (
+      <>
+        <SEO title="Deck not available" description="This deck is not available" />
+        <Navigation />
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+          <main className="container mx-auto px-4 py-20 text-center">
+            <Lock className="mx-auto h-10 w-10 text-slate-600" />
+            <h1 className="mt-4 text-2xl font-bold text-white">This deck isn&apos;t available</h1>
+            <p className="mx-auto mt-2 max-w-md text-slate-400">
+              It may be private, or it may have been deleted. If someone sent you a
+              link to it, use that link — it carries the permission.
+            </p>
+            <div className="mt-6 flex justify-center gap-2">
+              <Button asChild variant="outline" className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white">
+                <Link href="/decks/showcase">Browse the Showcase</Link>
+              </Button>
+              {!user && (
+                <Button asChild className="bg-cyan-600 text-white hover:bg-cyan-700">
+                  <Link href="/auth/login">Sign in</Link>
+                </Button>
+              )}
+            </div>
+          </main>
         </div>
       </>
     );
@@ -139,6 +220,9 @@ export default function DeckViewPage() {
                 {deck.description && (
                   <p className="truncate text-sm text-slate-400">{deck.description}</p>
                 )}
+                {!isOwner && (
+                  <p className="text-sm text-slate-500">Someone else&apos;s deck, read only.</p>
+                )}
               </div>
             </div>
 
@@ -155,12 +239,67 @@ export default function DeckViewPage() {
                 </Button>
               </DeckExportDialog>
 
-              <Button asChild size="sm" className="bg-cyan-600 text-white hover:bg-cyan-700">
-                <Link href={`/decks/${deck.id}/edit`}>
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit deck
-                </Link>
-              </Button>
+              {/* The owner gets the controls that change the deck; everyone else
+                  gets the one that copies it. */}
+              {isOwner ? (
+                <>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+                      >
+                        {deck.is_public ? (
+                          <Globe className="mr-2 h-4 w-4 text-cyan-400" />
+                        ) : (
+                          <Share2 className="mr-2 h-4 w-4" />
+                        )}
+                        {deck.is_public ? "Public" : "Share"}
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-slate-700 bg-slate-900 text-white">
+                      <DialogHeader>
+                        <DialogTitle className="text-white">Who can see this deck</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                          Public decks appear on the Deck Showcase. Links work whatever
+                          the setting, and can be revoked at any time.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <DeckVisibility
+                        deckId={deck.id}
+                        isPublic={!!deck.is_public}
+                        onChange={reload}
+                      />
+                    </DialogContent>
+                  </Dialog>
+
+                  <Button asChild size="sm" className="bg-cyan-600 text-white hover:bg-cyan-700">
+                    <Link href={`/decks/${deck.id}/edit`}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Edit deck
+                    </Link>
+                  </Button>
+                </>
+              ) : user ? (
+                <Button
+                  size="sm"
+                  onClick={handleDuplicate}
+                  disabled={duplicating}
+                  className="bg-cyan-600 text-white hover:bg-cyan-700"
+                >
+                  {duplicating ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Copy className="mr-2 h-4 w-4" />
+                  )}
+                  Duplicate
+                </Button>
+              ) : (
+                <Button asChild size="sm" className="bg-cyan-600 text-white hover:bg-cyan-700">
+                  <Link href="/auth/login">Sign in to copy</Link>
+                </Button>
+              )}
             </div>
           </div>
 
@@ -170,12 +309,14 @@ export default function DeckViewPage() {
             <Card className="border-slate-700 bg-slate-800/50">
               <CardContent className="py-16 text-center">
                 <p className="mb-4 text-slate-400">This deck is empty.</p>
-                <Button asChild className="bg-cyan-600 text-white hover:bg-cyan-700">
-                  <Link href={`/decks/${deck.id}/edit`}>
-                    <Pencil className="mr-2 h-4 w-4" />
-                    Add some cards
-                  </Link>
-                </Button>
+                {isOwner && (
+                  <Button asChild className="bg-cyan-600 text-white hover:bg-cyan-700">
+                    <Link href={`/decks/${deck.id}/edit`}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Add some cards
+                    </Link>
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ) : (
