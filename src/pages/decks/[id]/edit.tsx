@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Eye,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
@@ -364,6 +365,18 @@ export default function DeckDetailPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+              >
+                <Link href={`/decks/${deck.id}`}>
+                  <Eye className="mr-2 h-4 w-4" />
+                  View deck
+                </Link>
+              </Button>
+
               <DeckImportDialog onImport={handleImport} canReplace={deck.deck_cards.length > 0}>
                 <Button
                   variant="outline"
@@ -656,7 +669,7 @@ export default function DeckDetailPage() {
  * past it.
  */
 const DECK_GRID =
-  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-9 2xl:grid-cols-12";
+  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-8";
 
 /**
  * One card in a deck: its art, then the controls.
@@ -862,8 +875,15 @@ function DeckCard({
         </Button>
       </div>
 
-      {/* Kept for the restricted marker only; the set code and rarity moved out
-          when the tiles became art-first. */}
+      <p
+        className="truncate px-1 text-center text-xs font-medium text-white"
+        title={card.name}
+      >
+        {card.name}
+      </p>
+
+      {/* Markers only; the set code and rarity moved out when the tiles became
+          art-first. */}
       {(card.is_restricted || family === "unknown" || row.foil) && (
         <p className="px-1 pb-1 text-center text-[10px] leading-tight text-amber-300">
           {card.is_restricted ? "Restricted" : family === "unknown" ? "No cost" : null}
